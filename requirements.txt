@@ -1,0 +1,5 @@
+openai>=1.40.0          # cliente OpenAI-compatible, usado apuntando a OpenRouter
+requests>=2.31.0        # llamadas REST a Supabase
+python-dotenv>=1.0.1    # carga de .env
+fastapi>=0.111.0        # interfaz de chat por HTTP (web/app.py)
+uvicorn[standard]>=0.30.0   # servidor ASGI para correr web/app.py

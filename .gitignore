@@ -1,0 +1,16 @@
+# Secretos y configuración local — nunca se versionan
+.env
+credentials.json
+token.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Carpeta de trabajo temporal de este proyecto
+.tmp/
+
+# Archivos internos del agente de Claude Code, no son parte del proyecto
+.claude/

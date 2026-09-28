@@ -1,0 +1,206 @@
+/* chat.css — estilos del panel de pruebas de agentes. Sin frameworks ni
+   build step: una sola hoja de estilos, pensada para uso interno/dev. */
+
+:root {
+  --color-fondo: #f4f6f8;
+  --color-panel: #ffffff;
+  --color-borde: #e2e5e9;
+  --color-texto: #1c2530;
+  --color-texto-suave: #6b7785;
+  --color-primario: #1f6feb;
+  --color-burbuja-bot: #eef1f5;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--color-fondo);
+  color: var(--color-texto);
+}
+
+.app {
+  display: flex;
+  height: 100vh;
+}
+
+.sidebar {
+  width: 280px;
+  min-width: 220px;
+  background: var(--color-panel);
+  border-right: 1px solid var(--color-borde);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sidebar h1 {
+  font-size: 1.1rem;
+  margin: 0;
+}
+
+.subtitulo {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+  color: var(--color-texto-suave);
+}
+
+label {
+  font-size: 0.8rem;
+  color: var(--color-texto-suave);
+}
+
+.session-row {
+  display: flex;
+  gap: 6px;
+}
+
+input[type="text"],
+textarea {
+  border: 1px solid var(--color-borde);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 0.9rem;
+  font-family: inherit;
+}
+
+input[type="text"] {
+  flex: 1;
+  min-width: 0;
+}
+
+button {
+  border: none;
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: var(--color-primario);
+  color: white;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+button.secundario {
+  background: var(--color-fondo);
+  color: var(--color-texto);
+  border: 1px solid var(--color-borde);
+}
+
+.sesiones-conocidas {
+  margin-top: 8px;
+  overflow-y: auto;
+}
+
+.etiqueta {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  color: var(--color-texto-suave);
+  margin-bottom: 4px;
+}
+
+#sesiones-lista {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+#sesiones-lista li {
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  word-break: break-word;
+}
+
+#sesiones-lista li:hover {
+  background: var(--color-fondo);
+}
+
+#sesiones-lista li.activa {
+  background: var(--color-primario);
+  color: white;
+}
+
+.chat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.chat-header {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--color-borde);
+  background: var(--color-panel);
+  font-size: 0.9rem;
+  color: var(--color-texto-suave);
+}
+
+.mensajes {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.burbuja {
+  max-width: 70%;
+  padding: 10px 14px;
+  border-radius: 14px;
+  white-space: pre-wrap;
+  line-height: 1.4;
+  font-size: 0.92rem;
+}
+
+.burbuja-cliente {
+  align-self: flex-end;
+  background: var(--color-primario);
+  color: white;
+  border-bottom-right-radius: 4px;
+}
+
+.burbuja-bot {
+  align-self: flex-start;
+  background: var(--color-burbuja-bot);
+  color: var(--color-texto);
+  border-bottom-left-radius: 4px;
+}
+
+.burbuja.escribiendo {
+  opacity: 0.6;
+  font-style: italic;
+}
+
+.form-mensaje {
+  display: flex;
+  gap: 10px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--color-borde);
+  background: var(--color-panel);
+}
+
+.form-mensaje textarea {
+  flex: 1;
+  resize: none;
+}
+
+@media (max-width: 640px) {
+  .app {
+    flex-direction: column;
+  }
+  .sidebar {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--color-borde);
+  }
+}

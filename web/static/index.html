@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TecniElectronics — Panel de pruebas de agentes</title>
+  <link rel="stylesheet" href="/chat.css" />
+</head>
+<body>
+  <!--
+    Panel de pruebas de los agentes (Orquestador + Servicio Técnico) por
+    chat. Página estática, sin build step: toda la lógica vive en chat.js y
+    habla con la API de FastAPI (web/app.py) vía fetch().
+  -->
+  <div class="app">
+    <aside class="sidebar">
+      <h1>TecniElectronics</h1>
+      <p class="subtitulo">Panel de pruebas de agentes</p>
+
+      <label for="session-input">Teléfono del cliente simulado</label>
+      <div class="session-row">
+        <input id="session-input" type="text" placeholder="3000000000" />
+        <button id="session-switch-btn" title="Cambiar o crear sesión">Ir</button>
+      </div>
+
+      <button id="new-session-btn" class="secundario">+ Nueva conversación</button>
+
+      <div class="sesiones-conocidas">
+        <p class="etiqueta">Conversaciones recientes</p>
+        <ul id="sesiones-lista"></ul>
+      </div>
+    </aside>
+
+    <main class="chat">
+      <header class="chat-header">
+        <span id="chat-session-label">Sesión: —</span>
+      </header>
+
+      <div id="mensajes" class="mensajes" aria-live="polite"></div>
+
+      <form id="form-mensaje" class="form-mensaje">
+        <textarea id="input-mensaje" rows="1" placeholder="Escribe como si fueras el cliente…"></textarea>
+        <button type="submit">Enviar</button>
+      </form>
+    </main>
+  </div>
+
+  <script src="/chat.js"></script>
+</body>
+</html>
