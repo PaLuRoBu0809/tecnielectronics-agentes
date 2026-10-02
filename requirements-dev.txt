@@ -1,0 +1,7 @@
+# Herramientas de desarrollo y CI (no van en la imagen Docker).
+-r requirements.txt
+pytest>=9,<10
+ruff>=0.16,<1
+mypy>=2.3,<3
+types-requests
+psycopg[binary]>=3.3,<4   # solo para tests/test_integracion_postgres.py

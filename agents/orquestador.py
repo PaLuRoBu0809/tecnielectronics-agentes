@@ -5,20 +5,29 @@ Traducción del "Agente Conversacional (Orquestador)" (el primer prompt que
 compartiste). ORIGINAL_SYSTEM_PROMPT es una transcripción fiel del texto
 original, sin reescribir nada de su lógica de negocio.
 
-Como en esta fase SOLO se está construyendo el subagente de Servicio
-Técnico (Agente_Ventas todavía no existe), se le agregó una NOTA_TEMPORAL,
-claramente separada del prompt original, para que el orquestador no intente
-delegar a una herramienta que no existe si un cliente pregunta por compras.
-Esa nota es una adición mía para esta fase de desarrollo, NO parte del
-prompt de negocio — bórrala en cuanto conectes Agente_Ventas y agrega esa
-tool al TOOLS_SCHEMA.
+Mientras solo existía el subagente de Servicio Técnico, se le agregaba una
+NOTA_TEMPORAL, separada del prompt original, para que no delegara a una
+herramienta inexistente. Desde la Fase 12 `Agente_Ventas` está registrado en
+`SUBAGENTES` (ver más abajo), así que la nota ya no se incluye.
+
+NOTA_ASESOR_COMERCIAL (Fase 12, pedida por el negocio tras probar el chat):
+saludos y preguntas generales presentan las dos líneas de negocio, venta
+cruzada al cerrar un proceso, y una sola delegación por mensaje. Esa última
+regla además se garantiza en código en `run()`.
 """
 from __future__ import annotations
 
-from typing import Optional
+import logging
+import uuid
+from dataclasses import dataclass
+from typing import Callable, Optional
 
-from llm_loop import run_agent_loop
-from agents import servicio_tecnico_agent
+from contexto_conversacion import aplicar_ventana
+from llm_loop import PresupuestoTurno, run_agent_loop
+from agents import servicio_tecnico_agent, ventas_agent
+from tools import eventos_agente
+
+logger = logging.getLogger(__name__)
 
 ORIGINAL_SYSTEM_PROMPT = """# ROL
 
@@ -222,23 +231,105 @@ sola línea breve y cordial, que en este momento solo puedes ayudarlo con
 servicio técnico y que la línea de ventas estará disponible pronto. No
 inventes productos, precios ni disponibilidad bajo ninguna circunstancia."""
 
-SYSTEM_PROMPT = ORIGINAL_SYSTEM_PROMPT + NOTA_TEMPORAL_FASE_DESARROLLO
+NOTA_ASESOR_COMERCIAL = """
+
+---
+NOTA DE ASESOR COMERCIAL (adición explícita pedida por el negocio, Fase 12 de
+docs/PLAN_DE_MEJORAS.md; prevalece sobre el prompt original en estos puntos
+concretos). Eres la cara de Tecnielectronics: tu trabajo no es solo enrutar,
+es que el cliente conozca y aproveche TODO lo que ofrece la empresa.
+
+1. SALUDOS EN CUALQUIER MOMENTO: si el mensaje del cliente es SOLO un saludo
+   ("hola", "buenas", "buenos días", "qué más") sin ninguna intención,
+   responde tú con la plantilla fija de saludo y oferta de servicios, aunque
+   antes se estuviera conversando con un subagente. Un saludo no es
+   "continuar el mismo tema" (FASE 3): no lo delegues.
+
+2. PREGUNTAS GENERALES: "¿qué servicios tienen?", "¿qué ofrecen?", "¿qué
+   hacen?", "quiero información" son ambiguas entre las dos líneas de
+   negocio, aunque digan la palabra "servicios". Responde con la plantilla
+   presentando compra de equipos Y servicio técnico; no las mandes a
+   servicio técnico.
+
+3. VENTA CRUZADA (máximo una vez por conversación, nunca insistente): cuando
+   el subagente acaba de CERRAR un proceso con éxito (pedido registrado o
+   cita agendada), agrega al final de su respuesta UNA línea breve ofreciendo
+   la otra línea de negocio, relacionada con lo que el cliente hizo. Ej.:
+   - Tras una compra: "Por cierto, si necesitas instalación, configuración o
+     mantenimiento para tu equipo, también te agendamos servicio técnico. 🛠️"
+   - Tras agendar una cita: "Y si necesitas repuestos, accesorios o un equipo
+     nuevo, también te ayudo con la compra. 🛒"
+   Junto con la línea del tema pendiente (Regla 5), es la única excepción a
+   la prohibición de modificar la respuesta del subagente. No la agregues si
+   el subagente está pidiendo datos o confirmación, ni si el cliente ya
+   rechazó la otra línea.
+
+4. UNA DELEGACIÓN POR MENSAJE: invoca un subagente UNA sola vez por mensaje
+   del cliente y pásale lo que el cliente escribió. Nunca inventes preguntas
+   ni respuestas en nombre del cliente. Si el subagente pide datos o
+   confirmación, es el CLIENTE quien contesta en su siguiente mensaje: tu
+   respuesta final es el texto COMPLETO del subagente, nunca una nota tuya
+   sobre lo que estás haciendo (ej. "[Esperando al cliente]"). El sistema
+   bloquea una segunda invocación en el mismo turno y, si no reenvías la
+   respuesta del subagente, la envía él.
+"""
+
+# ---------------------------------------------------------------------------
+# Registro de sub-agentes (Fase 11 de docs/PLAN_DE_MEJORAS.md)
+# ---------------------------------------------------------------------------
+# Cada sub-agente es, para el modelo del orquestador, UNA tool que recibe el
+# mensaje del cliente y devuelve texto. Agregar uno (ej. Agente_Ventas) es:
+#   1. crear agents/ventas_agent.py con una función `run(mensaje_cliente,
+#      session_id, historial, run_id, presupuesto) -> (texto, historial)`;
+#   2. agregar su `SubAgente(...)` a SUBAGENTES.
+# El TOOLS_SCHEMA, las tools, el historial por agente en Supabase y la nota
+# temporal se derivan solos de este registro. Guía completa en el plan.
 
 
-# Solo se registra la tool que existe en esta fase. Cuando conectes
-# Agente_Ventas, agrega aquí su schema (mismo formato) y quita la
-# NOTA_TEMPORAL de arriba.
-TOOLS_SCHEMA = [
-    {
+@dataclass(frozen=True)
+class SubAgente:
+    tool: str  # nombre de la tool que ve el orquestador (el del prompt, ej. "Agente_Ventas")
+    clave_historial: str  # clave en conversaciones.historiales (ej. "ventas")
+    descripcion: str  # descripción de la tool para el modelo
+    ejecutar: Callable  # run(mensaje_cliente, session_id, historial, run_id, presupuesto) -> (texto, historial)
+
+
+SUBAGENTES = (
+    SubAgente(
+        tool="Agente_Servicio_Tecnico",
+        clave_historial="servicio_tecnico",
+        descripcion=(
+            "Subagente especializado en servicio técnico: identificación de problemas, "
+            "catálogo de servicios, agendamiento/modificación/cancelación de citas técnicas. "
+            "Invócalo con el mensaje del cliente en texto plano; devuelve una respuesta ya "
+            "redactada en texto plano, lista para reenviar tal cual."
+        ),
+        # Referencia perezosa: se resuelve en cada llamada, así los tests
+        # pueden reemplazar `servicio_tecnico_agent.run`.
+        ejecutar=lambda **kwargs: servicio_tecnico_agent.run(**kwargs),
+    ),
+    SubAgente(
+        tool="Agente_Ventas",
+        clave_historial="ventas",
+        descripcion=(
+            "Subagente especializado en venta de equipos: consulta de inventario, carrito de compras, "
+            "checkout, pago en línea o contraentrega, y consulta, modificación o cancelación de pedidos. "
+            "Invócalo con el mensaje del cliente en texto plano; devuelve una respuesta ya redactada en "
+            "texto plano, lista para reenviar tal cual."
+        ),
+        ejecutar=lambda **kwargs: ventas_agent.run(**kwargs),
+    ),
+)
+
+CLAVE_HISTORIAL_ORQUESTADOR = "orquestador"
+
+
+def _schema_de(sub: SubAgente) -> dict:
+    return {
         "type": "function",
         "function": {
-            "name": "Agente_Servicio_Tecnico",
-            "description": (
-                "Subagente especializado en servicio técnico: identificación de problemas, "
-                "catálogo de servicios, agendamiento/modificación/cancelación de citas técnicas. "
-                "Invócalo con el mensaje del cliente en texto plano; devuelve una respuesta ya "
-                "redactada en texto plano, lista para reenviar tal cual."
-            ),
+            "name": sub.tool,
+            "description": sub.descripcion,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -251,46 +342,129 @@ TOOLS_SCHEMA = [
             },
         },
     }
-]
+
+
+def construir_tools_schema(subagentes=SUBAGENTES) -> list:
+    return [_schema_de(sub) for sub in subagentes]
+
+
+def construir_system_prompt(subagentes=SUBAGENTES) -> str:
+    """Prompt original + nota de asesor comercial. La nota temporal solo
+    existe mientras Agente_Ventas no esté registrado: al agregarlo a
+    SUBAGENTES desaparece sola."""
+    ventas_registrado = any(s.tool == "Agente_Ventas" for s in subagentes)
+    temporal = "" if ventas_registrado else NOTA_TEMPORAL_FASE_DESARROLLO
+    return ORIGINAL_SYSTEM_PROMPT + NOTA_ASESOR_COMERCIAL + temporal
+
+
+TOOLS_SCHEMA = construir_tools_schema()
+SYSTEM_PROMPT = construir_system_prompt()
+
+
+def respuesta_para_cliente(texto_orquestador: str, texto_subagente: str) -> str:
+    """Garantía de código de la Regla 2 del prompt ("reenvía la respuesta
+    del subagente tal cual"). Bug real (2026-10-02): tras recibir la
+    respuesta de Ventas, el modelo del orquestador respondió una nota
+    inventada "[Esperando la siguiente entrada del cliente...]" y el cliente
+    nunca vio la respuesta.
+
+    Si el texto final del orquestador contiene la respuesta del subagente,
+    se respeta tal cual: puede llevar agregada la línea de venta cruzada o la
+    del tema pendiente, que el prompt permite. Si no la contiene (la resumió,
+    la cambió o la reemplazó), se envía la del subagente."""
+    if texto_subagente.strip() and texto_subagente.strip() not in (texto_orquestador or ""):
+        return texto_subagente
+    return texto_orquestador
 
 
 def run(
     mensaje_cliente: str,
     session_id: str,
-    orquestador_historial: Optional[list] = None,
-    servicio_tecnico_historial: Optional[list] = None,
+    historiales: Optional[dict] = None,
+    run_id: Optional[str] = None,
 ):
     """Punto de entrada del orquestador para UN turno de conversación.
 
-    `orquestador_historial` y `servicio_tecnico_historial` son las
-    conversaciones propias de cada agente para esta sesión — quien llama
-    (ver main.py) debe persistir ambas entre turnos, cada una en su
-    propio hilo, para que el cliente no tenga que repetir datos.
+    `historiales` es `{clave_agente: [mensajes]}` tal como lo devuelve
+    `AlmacenSesiones.obtener()`: el hilo propio del orquestador
+    (`"orquestador"`) y el de cada sub-agente (`SubAgente.clave_historial`).
+    Quien llama debe guardarlo entre turnos (`AlmacenSesiones.guardar()`)
+    para que el cliente no tenga que repetir datos.
 
-    Devuelve: (respuesta_final, orquestador_historial_actualizado,
-               servicio_tecnico_historial_actualizado)
+    `run_id` (opcional, generado en `web/app.py` por cada `POST /api/chat`)
+    agrupa TODOS los eventos de este turno — los del propio Orquestador Y
+    los de los sub-agentes que invoque — bajo la misma "corrida" en el panel
+    "Flujo en Vivo" (ver `tools/eventos_agente.py`).
+
+    Devuelve: (respuesta_final, historiales_actualizados)
+
+    Presupuesto del turno (Fase 3 de `docs/PLAN_DE_MEJORAS.md`): se crea UN
+    `PresupuestoTurno` y lo comparten este loop y los de los sub-agentes, así
+    el peor caso del turno completo (llamadas al LLM y duración) está acotado.
     """
-    orquestador_historial = orquestador_historial or []
-    # contenedor mutable para que la tool interna pueda "devolver" el
-    # historial actualizado del subagente sin cambiar la firma de la tool
-    contenedor_st_historial = [servicio_tecnico_historial or []]
+    historiales = dict(historiales or {})
+    # El run_id identifica el turno también para la salvaguarda de
+    # confirmación (`tools/citas_tools.py`): se genera aquí si no viene
+    # (consola `main.py`), para que cada mensaje sea un turno distinto.
+    run_id = run_id or uuid.uuid4().hex
+    presupuesto = PresupuestoTurno()
 
-    def _tool_agente_servicio_tecnico(mensaje_cliente: str) -> str:
-        texto, nuevo_historial = servicio_tecnico_agent.run(
-            mensaje_cliente=mensaje_cliente,
-            session_id=session_id,
-            historial=contenedor_st_historial[0],
-        )
-        contenedor_st_historial[0] = nuevo_historial
-        return texto
+    # Una sola delegación por mensaje del cliente (garantía de código, no
+    # solo de prompt). Bug real: el modelo invocó a Ventas dos veces en el
+    # mismo turno, la segunda con una pregunta inventada ("¿Confirmas...?")
+    # como si la hubiera escrito el cliente; el cliente terminó confirmando
+    # dos veces. Además, repetir una delegación puede repetir escrituras
+    # (añadir al carrito dos veces).
+    delegaciones: list = []
+    respuesta_subagente: list = []  # el texto que devolvió el sub-agente en este turno
 
-    tool_functions = {"Agente_Servicio_Tecnico": _tool_agente_servicio_tecnico}
+    def _tool_para(sub: SubAgente) -> Callable:
+        # El nombre del parámetro (`mensaje_cliente`) debe coincidir con el
+        # schema de la tool; el historial del sub-agente se actualiza en
+        # `historiales` para devolverlo al final del turno.
+        def tool(mensaje_cliente: str) -> str:
+            if delegaciones:
+                return (
+                    f"(interno) BLOQUEADO: ya delegaste este mensaje del cliente a {delegaciones[0]} y tienes "
+                    "su respuesta. No invoques más subagentes en este turno: reenvía esa respuesta al "
+                    "cliente tal cual y espera su siguiente mensaje."
+                )
+            delegaciones.append(sub.tool)
+            texto, nuevo_historial = sub.ejecutar(
+                mensaje_cliente=mensaje_cliente,
+                session_id=session_id,
+                historial=historiales.get(sub.clave_historial, []),
+                run_id=run_id,
+                presupuesto=presupuesto,
+            )
+            historiales[sub.clave_historial] = nuevo_historial
+            respuesta_subagente.append(texto)
+            return texto
 
-    orquestador_historial = orquestador_historial + [{"role": "user", "content": mensaje_cliente}]
-    respuesta, orquestador_historial_actualizado = run_agent_loop(
+        return tool
+
+    tool_functions = {sub.tool: _tool_para(sub) for sub in SUBAGENTES}
+
+    historial_orq = historiales.get(CLAVE_HISTORIAL_ORQUESTADOR, []) + [{"role": "user", "content": mensaje_cliente}]
+    # Solo los últimos turnos van al modelo (Fase 6); sin ficha: el
+    # orquestador solo necesita el contexto reciente para saber qué tema
+    # está atendiendo. Lo descartado se conserva en el historial guardado.
+    descartados, ventana = aplicar_ventana(historial_orq)
+    respuesta, ventana_actualizada = run_agent_loop(
         system_prompt=SYSTEM_PROMPT,
-        messages=orquestador_historial,
+        messages=ventana,
         tools_schema=TOOLS_SCHEMA,
         tool_functions=tool_functions,
+        contexto={"agente": "Orquestador", "session_id": session_id, "run_id": run_id, "presupuesto": presupuesto},
+        reenviar_ultima_tool_si_se_agota=True,
     )
-    return respuesta, orquestador_historial_actualizado, contenedor_st_historial[0]
+    if respuesta_subagente:
+        respuesta = respuesta_para_cliente(respuesta, respuesta_subagente[0])
+        # El historial guardado debe decir lo que el cliente realmente vio.
+        if ventana_actualizada and ventana_actualizada[-1].get("role") == "assistant":
+            ventana_actualizada[-1] = {**ventana_actualizada[-1], "content": respuesta}
+    historiales[CLAVE_HISTORIAL_ORQUESTADOR] = descartados + ventana_actualizada
+    # Un evento por turno con razón de parada, llamadas, duración, tokens y
+    # costo (Fase 8): alimenta los logs JSON y las métricas/alertas.
+    eventos_agente.publicar_evento("resumen_turno", session_id=session_id, run_id=run_id, **presupuesto.resumen())
+    return respuesta, historiales

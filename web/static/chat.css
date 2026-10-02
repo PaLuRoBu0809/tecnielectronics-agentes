@@ -49,6 +49,30 @@ body {
   color: var(--color-texto-suave);
 }
 
+.nav-superior {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.nav-superior a {
+  padding: 6px 10px;
+  border-radius: 8px;
+  text-decoration: none;
+  font-size: 0.85rem;
+  color: var(--color-texto-suave);
+}
+
+.nav-superior a:hover {
+  background: var(--color-fondo);
+}
+
+.nav-superior a.activo {
+  background: var(--color-primario);
+  color: white;
+}
+
 label {
   font-size: 0.8rem;
   color: var(--color-texto-suave);

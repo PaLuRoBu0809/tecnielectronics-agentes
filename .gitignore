@@ -1,5 +1,7 @@
 # Secretos y configuración local — nunca se versionan
 .env
+.env.*
+!.env.example
 credentials.json
 token.json
 
@@ -8,6 +10,9 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # Carpeta de trabajo temporal de este proyecto
 .tmp/

@@ -1,0 +1,367 @@
+/* admin.css — estilos del panel de calendario y registros. Mismas variables
+   de color que chat.css (para que ambas páginas se vean como un solo
+   sistema), sin frameworks ni build step. */
+
+:root {
+  --color-fondo: #f4f6f8;
+  --color-panel: #ffffff;
+  --color-borde: #e2e5e9;
+  --color-texto: #1c2530;
+  --color-texto-suave: #6b7785;
+  --color-primario: #1f6feb;
+  --color-hoy: #fff6da;
+  --color-confirmado: #1a7f37;
+  --color-confirmado-fondo: #daf5e0;
+  --color-cancelado: #b42318;
+  --color-cancelado-fondo: #fbe4e1;
+  --color-pendiente: #8a5a00;
+  --color-pendiente-fondo: #fff1c7;
+  --color-info: #1f4fa3;
+  --color-info-fondo: #e1ebfb;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--color-fondo);
+  color: var(--color-texto);
+}
+
+.app-admin {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.admin-header {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 14px 24px;
+  background: var(--color-panel);
+  border-bottom: 1px solid var(--color-borde);
+}
+
+.admin-header h1 {
+  font-size: 1.1rem;
+  margin: 0;
+}
+
+.admin-nav {
+  display: flex;
+  gap: 8px;
+}
+
+.admin-nav a {
+  padding: 6px 12px;
+  border-radius: 8px;
+  text-decoration: none;
+  font-size: 0.85rem;
+  color: var(--color-texto-suave);
+}
+
+.admin-nav a:hover {
+  background: var(--color-fondo);
+}
+
+.admin-nav a.activo {
+  background: var(--color-primario);
+  color: white;
+}
+
+.admin-main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  grid-template-rows: auto auto;
+  gap: 20px;
+  padding: 20px 24px;
+}
+
+.panel-calendario {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.panel-dia {
+  grid-column: 2;
+  grid-row: 1;
+  background: var(--color-panel);
+  border: 1px solid var(--color-borde);
+  border-radius: 10px;
+  padding: 16px;
+  align-self: start;
+}
+
+.panel-registros {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+
+button {
+  border: none;
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: var(--color-primario);
+  color: white;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+button.secundario {
+  background: var(--color-panel);
+  color: var(--color-texto);
+  border: 1px solid var(--color-borde);
+}
+
+input[type="text"],
+select {
+  border: 1px solid var(--color-borde);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 0.85rem;
+  font-family: inherit;
+}
+
+.etiqueta {
+  font-size: 0.8rem;
+  color: var(--color-texto-suave);
+}
+
+/* --- Calendario --- */
+
+.calendario-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.calendario-toolbar h2 {
+  flex: 1;
+  margin: 0;
+  font-size: 1rem;
+  text-align: center;
+  text-transform: capitalize;
+}
+
+.calendario-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+  background: var(--color-panel);
+  border: 1px solid var(--color-borde);
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.calendario-dia-header {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-texto-suave);
+  text-align: center;
+  padding-bottom: 4px;
+}
+
+.calendario-celda {
+  min-height: 90px;
+  border-radius: 6px;
+  padding: 6px;
+  border: 1px solid transparent;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.calendario-celda-vacia {
+  background: transparent;
+}
+
+.calendario-celda:not(.calendario-celda-vacia) {
+  background: var(--color-fondo);
+}
+
+.calendario-celda-hoy {
+  background: var(--color-hoy) !important;
+  border-color: #e8cf6a;
+}
+
+.calendario-celda-con-citas {
+  cursor: pointer;
+}
+
+.calendario-celda-con-citas:hover {
+  border-color: var(--color-primario);
+}
+
+.calendario-numero {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-texto-suave);
+}
+
+.calendario-chip {
+  font-size: 0.7rem;
+  padding: 2px 5px;
+  border-radius: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.badge-confirmado {
+  background: var(--color-confirmado-fondo);
+  color: var(--color-confirmado);
+}
+
+.badge-cancelado {
+  background: var(--color-cancelado-fondo);
+  color: var(--color-cancelado);
+}
+
+/* Estados de pedidos (pestaña Ventas, ventas.js). */
+.badge-pendiente {
+  background: var(--color-pendiente-fondo);
+  color: var(--color-pendiente);
+}
+
+.badge-info {
+  background: var(--color-info-fondo);
+  color: var(--color-info);
+}
+
+.pedido-link-pago {
+  font-size: 0.75rem;
+  color: var(--color-primario);
+}
+
+/* La columna de productos puede ser larga: se corta con "…" y el texto
+   completo queda en el title de la celda. */
+#tabla-pedidos td:nth-child(5) {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.calendario-chip-mas {
+  font-size: 0.68rem;
+  color: var(--color-texto-suave);
+}
+
+/* --- Panel de día --- */
+
+.panel-dia-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.panel-dia-header h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.panel-dia-lista {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.panel-dia-lista li {
+  border: 1px solid var(--color-borde);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 0.82rem;
+}
+
+.panel-dia-lista .fila-titulo {
+  display: flex;
+  justify-content: space-between;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.panel-dia-lista .fila-detalle {
+  color: var(--color-texto-suave);
+}
+
+/* --- Registros --- */
+
+.registros-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.registros-toolbar h2 {
+  margin: 0;
+  font-size: 1rem;
+  margin-right: auto;
+}
+
+.tabla-wrapper {
+  overflow-x: auto;
+  background: var(--color-panel);
+  border: 1px solid var(--color-borde);
+  border-radius: 10px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+th, td {
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--color-borde);
+  white-space: nowrap;
+}
+
+th {
+  color: var(--color-texto-suave);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+}
+
+.badge-estado {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+}
+
+.aviso-error {
+  color: var(--color-cancelado);
+  padding: 16px;
+}
+
+.aviso-vacio {
+  padding: 16px;
+  color: var(--color-texto-suave);
+  text-align: center;
+}
+
+@media (max-width: 900px) {
+  .admin-main {
+    grid-template-columns: 1fr;
+  }
+  .panel-dia {
+    grid-column: 1;
+    grid-row: 2;
+  }
+  .panel-registros {
+    grid-row: 3;
+  }
+}

@@ -1,0 +1,28 @@
+# Secretos: nunca dentro de la imagen.
+.env
+.env.*
+!.env.example
+credentials.json
+token.json
+
+# Control de versiones, entornos y cachés locales.
+.git
+.github
+.venv
+venv
+__pycache__
+**/__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.tmp
+.claude
+
+# No hacen falta para ejecutar el servidor.
+tests
+docs
+supabase
+requirements-dev.txt
+Dockerfile
+.dockerignore

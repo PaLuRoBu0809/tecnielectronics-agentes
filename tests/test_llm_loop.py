@@ -92,4 +92,7 @@ print("Mensajes en el historial devuelto:", len(historial))
 assert "Hola Isaac" in texto, "El loop no devolvió el texto final esperado"
 assert llamadas["n"] == 2, "El loop no hizo exactamente 2 llamadas (tool_use + respuesta final)"
 assert any(m.get("role") == "tool" for m in historial), "El resultado de la tool no quedó en el historial"
-print("\n✅ El loop de tool use funciona correctamente: detecta tool_calls, ejecuta la función Python, reinyecta el resultado y termina en una respuesta final en texto plano.")
+print(
+    "\n✅ El loop de tool use funciona correctamente: detecta tool_calls, ejecuta la función Python, "
+    "reinyecta el resultado y termina en una respuesta final en texto plano."
+)

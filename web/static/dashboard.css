@@ -1,0 +1,555 @@
+/* dashboard.css — shell del dashboard unificado (header + pestañas) y las
+   2 vistas nuevas que no tenían página propia (Ventas, Flujo en Vivo). Las
+   vistas de Citas y Chat reutilizan admin.css/chat.css tal cual, cargados
+   aparte (ver index.html) — este archivo NO redefine esos estilos. */
+
+:root {
+  --color-fondo: #f4f6f8;
+  --color-panel: #ffffff;
+  --color-borde: #e2e5e9;
+  --color-texto: #1c2530;
+  --color-texto-suave: #6b7785;
+  --color-primario: #1f6feb;
+  --color-terminal-fondo: #14161a;
+  --color-terminal-texto: #d7dde3;
+  --flujo-fondo: #14161f;
+  --flujo-fondo-nodo: #1e2130;
+  --flujo-borde-nodo: #3a3f52;
+  --flujo-texto: #e4e7ee;
+  --flujo-texto-suave: #8b90a3;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--color-fondo);
+  color: var(--color-texto);
+}
+
+.dashboard {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* --- Header + pestañas (fiel al mock-up: título a la izquierda, pastilla
+   negra en la pestaña activa) --- */
+
+.dashboard-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 18px 28px;
+  background: var(--color-panel);
+  border-bottom: 1px solid var(--color-borde);
+  flex-wrap: wrap;
+}
+
+.dashboard-titulo {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.dashboard-nav {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tab-btn {
+  border: none;
+  background: transparent;
+  color: var(--color-texto);
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 8px 18px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.tab-btn:hover {
+  background: var(--color-fondo);
+}
+
+.tab-btn.activo {
+  background: #111319;
+  color: #ffffff;
+}
+
+.dashboard-main {
+  flex: 1;
+  padding: 24px 28px;
+}
+
+.dashboard-vista[hidden] {
+  display: none;
+}
+
+/* La vista de Citas/Chat traen su propio layout completo (admin-main / app)
+   diseñado para ocupar toda la página; aquí solo se acota su altura para
+   convivir debajo del header del dashboard en vez de asumir 100vh. */
+#vista-chat .app {
+  height: 75vh;
+  min-height: 480px;
+  border: 1px solid var(--color-borde);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+/* --- Ventas: estado vacío de la tabla de pedidos (ventas.js) --- */
+
+.ventas-vacio {
+  padding: 56px 24px;
+  text-align: center;
+}
+
+.ventas-vacio-icono {
+  font-size: 2.2rem;
+  margin: 0 0 8px;
+}
+
+.ventas-vacio h3 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+
+.ventas-vacio-texto {
+  margin: 0 auto;
+  max-width: 420px;
+  color: var(--color-texto-suave);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+/* --- Flujo en Vivo: layout general (sidebar de corridas + panel principal) --- */
+
+.flujo-layout {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.flujo-sidebar {
+  width: 270px;
+  flex-shrink: 0;
+  background: var(--color-panel);
+  border: 1px solid var(--color-borde);
+  border-radius: 10px;
+  max-height: calc(100vh - 170px);
+  overflow-y: auto;
+}
+
+.flujo-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--color-borde);
+  position: sticky;
+  top: 0;
+  background: var(--color-panel);
+}
+
+.flujo-sidebar-header h3 {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.flujo-en-vivo-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.75rem;
+  color: var(--color-texto-suave);
+}
+
+.flujo-corridas-lista {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.flujo-corrida-item {
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.flujo-corrida-item:hover {
+  background: var(--color-fondo);
+}
+
+.flujo-corrida-item.activo {
+  background: #eaf2ff;
+  border-color: #b6d4ff;
+}
+
+.flujo-corrida-titulo {
+  display: block;
+  font-weight: 600;
+  font-size: 0.8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flujo-corrida-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--color-texto-suave);
+  font-size: 0.7rem;
+  margin-top: 3px;
+  gap: 6px;
+}
+
+.flujo-corrida-sesion {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flujo-corrida-dots {
+  display: flex;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.flujo-corrida-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #3fb950;
+}
+
+.flujo-corrida-dot.flujo-dot-error {
+  background: #f85149;
+}
+
+.flujo-corrida-vacio {
+  padding: 20px 14px;
+  color: var(--color-texto-suave);
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+.flujo-principal {
+  flex: 1;
+  min-width: 0;
+}
+
+/* --- Panel de detalle de un nodo (al hacer click, viendo una corrida) --- */
+
+.flujo-detalle-nodo {
+  background: var(--color-panel);
+  border: 1px solid var(--color-borde);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+
+.flujo-detalle-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.flujo-detalle-header strong {
+  font-size: 0.9rem;
+}
+
+.flujo-detalle-vacio {
+  color: var(--color-texto-suave);
+  font-size: 0.85rem;
+  font-style: italic;
+}
+
+/* --- Flujo en Vivo (terminal de logs, scroll independiente) --- */
+
+.flujo-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.flujo-estado {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.flujo-estado-conectado {
+  color: #1a7f37;
+}
+
+.flujo-estado-error {
+  color: #b42318;
+}
+
+.flujo-autoscroll-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  color: var(--color-texto-suave);
+  margin-left: auto;
+}
+
+.flujo-filtro-activo {
+  color: var(--color-primario);
+  font-weight: 600;
+}
+
+/* --- Canvas estilo n8n: fondo oscuro, nodos + conexiones SVG con
+   posiciones fijas. Modelo/Memoria cuelgan de cada agente con línea
+   punteada ("utilidad"), igual que los nodos Chat Model/Memory de un nodo
+   AI Agent real en n8n — no son parte del flujo principal de conversación,
+   son recursos que el agente consulta. --- */
+
+.flujo-canvas-wrapper {
+  overflow-x: auto;
+  background: var(--flujo-fondo);
+  border: 1px solid var(--color-borde);
+  border-radius: 10px;
+  margin-bottom: 12px;
+}
+
+.flujo-canvas {
+  position: relative;
+  /* Ancho y alto los fija flujo.js (CANVAS_ANCHO / CANVAS_ALTO). */
+  background-image: radial-gradient(circle, #2a2d3d 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+.flujo-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.flujo-conexion {
+  fill: none;
+  stroke: #454a5e;
+  stroke-width: 2;
+}
+
+.flujo-conexion-utilidad {
+  stroke-dasharray: 4 4;
+  stroke: #5b6178;
+}
+
+.flujo-conexion-discontinua {
+  stroke-dasharray: 6 5;
+  stroke: #3a3f52;
+}
+
+.flujo-nodo {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  border: 1.5px solid var(--flujo-borde-nodo);
+  background: var(--flujo-fondo-nodo);
+  color: var(--flujo-texto);
+  cursor: pointer;
+  user-select: none;
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.flujo-nodo-etiqueta {
+  pointer-events: none;
+}
+
+.flujo-nodo-badge {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  background: #b8860b;
+  color: #1a1a1a;
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 999px;
+  border: 1px solid var(--flujo-fondo);
+}
+
+.flujo-nodo:hover {
+  border-color: var(--color-primario);
+}
+
+.flujo-nodo-seleccionado {
+  border-color: var(--color-primario);
+  box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.35);
+}
+
+.flujo-nodo-entrada { background: #24273a; border-color: #454a5e; }
+.flujo-nodo-agente { background: #17233d; border-color: #3d6bb0; }
+.flujo-nodo-modelo { background: #3a2e14; border-color: #b8860b; }
+.flujo-nodo-memoria { background: #163326; border-color: #2f8f5b; }
+.flujo-nodo-tool { background: #2a1f3d; border-color: #7b4fc9; font-weight: 500; }
+.flujo-nodo-datos { background: #0f3438; border-color: #2b9aa6; }
+.flujo-nodo-deshabilitado {
+  background: repeating-linear-gradient(45deg, #1a1c28, #1a1c28 6px, #22243333 6px, #222433 12px);
+  color: var(--flujo-texto-suave);
+  border-style: dashed;
+  cursor: default;
+}
+
+/* Pulso: se agrega/quita por JS (ver flujo.js `pulsar()`) cuando llega un
+   evento real relacionado con ese nodo/conexión — nunca queda encendido
+   permanentemente. */
+@keyframes flujo-pulso-nodo {
+  0% { box-shadow: 0 0 0 0 rgba(31, 111, 235, 0.55); }
+  100% { box-shadow: 0 0 0 12px rgba(31, 111, 235, 0); }
+}
+@keyframes flujo-pulso-nodo-error {
+  0% { box-shadow: 0 0 0 0 rgba(244, 63, 63, 0.55); }
+  100% { box-shadow: 0 0 0 12px rgba(244, 63, 63, 0); }
+}
+
+.flujo-nodo-pulso {
+  animation: flujo-pulso-nodo 1.2s ease-out;
+  border-color: var(--color-primario);
+}
+.flujo-nodo-pulso-error {
+  animation: flujo-pulso-nodo-error 1.2s ease-out;
+  border-color: #d63333;
+}
+
+.flujo-conexion-pulso {
+  stroke: var(--color-primario);
+  stroke-width: 3;
+  transition: stroke 0.2s ease, stroke-width 0.2s ease;
+}
+.flujo-conexion-pulso-error {
+  stroke: #d63333;
+  stroke-width: 3;
+  transition: stroke 0.2s ease, stroke-width 0.2s ease;
+}
+
+/* --- Estado FIJO al ver una corrida puntual del sidebar (no un pulso
+   pasajero): nodos/conexiones que SÍ participaron quedan coloreados,
+   los que no, se apagan — igual que "Este agente no participó en esta
+   corrida" del historial de ejecuciones de n8n. --- */
+
+.flujo-nodo-inactivo-corrida {
+  opacity: 0.35;
+  filter: grayscale(0.7);
+}
+.flujo-conexion-inactiva-corrida {
+  opacity: 0.25;
+}
+
+.flujo-nodo-visitado-exito {
+  border-color: #3fb950;
+  box-shadow: 0 0 0 2px rgba(63, 185, 80, 0.2);
+}
+.flujo-nodo-visitado-error {
+  border-color: #d63333;
+  box-shadow: 0 0 0 2px rgba(214, 51, 51, 0.2);
+}
+.flujo-conexion-visitada-exito {
+  stroke: #3fb950;
+  stroke-width: 3;
+}
+.flujo-conexion-visitada-error {
+  stroke: #d63333;
+  stroke-width: 3;
+}
+
+.flujo-log {
+  height: 320px;
+  min-height: 240px;
+  overflow-y: auto;
+  background: var(--color-terminal-fondo);
+  color: var(--color-terminal-texto);
+  border-radius: 10px;
+  padding: 12px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 0.78rem;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.evento-tarjeta {
+  border-left: 3px solid #4b5563;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 4px;
+}
+
+.evento-cabecera {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.evento-hora {
+  color: #7d8590;
+}
+
+.evento-tipo-badge {
+  font-weight: 700;
+}
+
+.evento-meta {
+  color: #9aa4b2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evento-payload {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #c9d1d9;
+  font-size: 0.76rem;
+}
+
+.evento-llamada-modelo { border-left-color: #58a6ff; }
+.evento-respuesta-modelo { border-left-color: #3fb950; }
+.evento-modelo-fallo { border-left-color: #f85149; }
+.evento-tool-llamada { border-left-color: #d2a8ff; }
+.evento-tool-resultado { border-left-color: #56d4dd; }
+.evento-respuesta-final { border-left-color: #e3b341; }
+
+.evento-llamada-modelo .evento-tipo-badge { color: #58a6ff; }
+.evento-respuesta-modelo .evento-tipo-badge { color: #3fb950; }
+.evento-modelo-fallo .evento-tipo-badge { color: #f85149; }
+.evento-tool-llamada .evento-tipo-badge { color: #d2a8ff; }
+.evento-tool-resultado .evento-tipo-badge { color: #56d4dd; }
+.evento-respuesta-final .evento-tipo-badge { color: #e3b341; }
+
+@media (max-width: 720px) {
+  .dashboard-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .dashboard-main {
+    padding: 16px;
+  }
+}

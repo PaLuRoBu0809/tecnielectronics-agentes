@@ -5,6 +5,13 @@ a un servicio Python con tool use nativo sobre OpenRouter. Es el **paso 2-4 del
 plan de migración**: un piloto con solo estos dos agentes, antes de tocar Ventas
 ni de conectar esto a n8n.
 
+> **Plan de mejoras en curso:** ver [`docs/PLAN_DE_MEJORAS.md`](docs/PLAN_DE_MEJORAS.md)
+> (seguridad, resiliencia del LLM, presupuesto de turno, validación, etc.), con
+> el registro detallado de cada cambio. Algunas secciones de este README
+> describen el estado anterior a esas mejoras; el plan manda cuando difieren.
+> Tests: `python tests/correr_todos.py`. Para agregar `Agente_Ventas`, ver la
+> guía al final de ese documento.
+
 ## Qué SÍ está implementado
 
 - El loop genérico de tool use (`llm_loop.py`), con fallback entre varios
@@ -33,7 +40,7 @@ ni de conectar esto a n8n.
   (`main.py`) y una interfaz de chat por navegador (`web/app.py`, FastAPI).
 - Memoria conversacional persistente: el historial de ambos agentes por
   `session_id` se guarda en la tabla `conversaciones` de Supabase (esquema
-  en `sql/001_conversaciones.sql`), no en la RAM del proceso — sobrevive a
+  en `supabase/migrations/20260927000001_conversaciones.sql`), no en la RAM del proceso — sobrevive a
   reinicios y es la misma entre instancias, requisito para desplegar en un
   hosting como Render.
 - Tests que corren gratis, sin gastar cuota real: `tests/test_llm_loop.py`
@@ -105,7 +112,7 @@ Antes, nada garantizaba de forma atómica que dos citas no se cruzaran si dos
 conversaciones casi simultáneas agendaban el mismo horario — ni Calendar ni
 el código lo prevenían realmente, todo dependía de que el LLM calculara bien
 la disponibilidad leyendo texto. Ahora Postgres mismo lo impide
-(`sql/002_disponibilidad_sin_calendar.sql`):
+(`supabase/migrations/20260927000002_disponibilidad_sin_calendar.sql`):
 
 ```sql
 alter table servicios_agendados
@@ -150,61 +157,183 @@ sin efecto en el comportamiento real.
 revocar el acceso de esa app en https://myaccount.google.com/permissions,
 aunque no es urgente (las credenciales simplemente quedaron sin uso).
 
+## Agendamiento por técnico
+
+Cada tipo de servicio técnico (fila del catálogo `servicios_tecnicos`) tiene
+un técnico responsable asignado (columna `tecnico_id`, ver
+`supabase/migrations/20260928000003_tecnicos.sql`). La disponibilidad y el constraint anti-choque de la
+migración 002 dejaron de ser GLOBALES: ahora están acotados **por técnico**
+— dos técnicos distintos sí pueden tener citas confirmadas a la misma hora.
+
+- `tools/catalog_tools.resolver_tecnico_para_servicio(servicio_id)` es el
+  punto único donde se resuelve qué técnico atiende un servicio.
+- `{Consultar_eventos}` ahora **exige** `servicio_id` (además de
+  `fecha_inicio`/`fecha_fin`) — es el único cambio real al `TOOLS_SCHEMA` del
+  agente desde que existe el proyecto; todo lo demás de esta funcionalidad es
+  interno (`tools/citas_tools.py`).
+- `{Crear_evento}`/`{Actualizar_evento}` resuelven y guardan el `tecnico_id`
+  automáticamente — el agente nunca lo pide, nunca lo recibe como parámetro,
+  y el prompt (`NOTA_ASIGNACION_TECNICOS`) le prohíbe mencionarle un técnico
+  al cliente.
+- Si un servicio no tiene técnico configurado, todas las operaciones
+  (`Consultar_eventos`, `Crear_evento`, `Actualizar_evento`) fallan con un
+  mensaje explícito en vez de asumir disponibilidad o asignar cualquier
+  técnico.
+
+**Migración pendiente de aplicar manualmente:** el conector MCP de Supabase
+que antes aplicaba las migraciones automáticamente se desconectó a mitad de
+este proyecto. Para activar esta funcionalidad, copia y pega el contenido
+completo de `supabase/migrations/20260928000003_tecnicos.sql` en el SQL Editor de tu proyecto de
+Supabase (Supabase Studio → SQL Editor → New query → pegar → Run). Crea la
+tabla `tecnicos` con 2 técnicos de ejemplo, agrega `tecnico_id` al catálogo y
+a las citas, y reemplaza el constraint anti-choque por la versión acotada
+por técnico. Después, entra a la tabla `servicios_tecnicos` en Supabase
+Studio y reasigna manualmente cada servicio al técnico real que corresponda
+(la migración deja todos apuntando al primer técnico de ejemplo, solo para
+que la demo funcione de inmediato) — y agrega tus técnicos reales a la tabla
+`tecnicos` (o bórrale los de ejemplo).
+
+## Dashboard unificado (`web/static/index.html`)
+
+Una sola página con 4 pestañas (sin recargar al cambiar de una a otra —
+`dashboard.js` solo muestra/oculta secciones que ya están en el DOM):
+
+- **Citas** — calendario mensual con las citas reales de Supabase y una
+  tabla con todos los registros (cliente, teléfono, servicio, técnico,
+  fechas, descripción, estado), con buscador y filtro por estado. Es de
+  solo lectura, no pasa por el LLM: consume `GET /api/citas`,
+  `GET /api/catalogo` y `GET /api/tecnicos` (ver `web/app.py`), que a su vez
+  leen directo de Supabase vía `tools/citas_repository.py`,
+  `tools/catalog_tools.py` y `tools/tecnicos_repository.py`. Lógica en
+  `admin.js`/`admin.css` (nombre heredado de cuando era una página aparte).
+- **Ventas** — esqueleto vacío ("Empty State" estilo Shopify: tabla con
+  encabezados + mensaje "Todavía no hay pedidos"), a propósito sin datos ni
+  lógica — se activa cuando exista `Agente_Ventas`.
+- **Chat prueba** — el mismo panel de pruebas de siempre (`chat.js` +
+  `chat.css`), para conversar con los agentes como si fueras el cliente.
+- **Flujo en vivo** — monitor en tiempo real de lo que hace el agente por
+  dentro (ver sección siguiente).
+
+Los 3 scripts (`admin.js`, `chat.js`, `flujo.js`) se cargan como módulos ES
+(`type="module"`) para que cada uno tenga su propio scope — evita que sus
+variables de nivel superior (ej. los tres declaran `const el`) choquen entre
+sí al convivir ahora en una sola página. Los tres corren siempre (no solo
+cuando su pestaña está visible), así que sus datos ya están cargados al
+cambiar de pestaña.
+
+## Monitor de Flujo en Vivo (debug del agente en tiempo real, estilo n8n)
+
+La pestaña "Flujo en vivo" tiene 3 partes:
+
+- **Sidebar "Corridas"** (izquierda) — un ítem por cada mensaje real de un
+  cliente (una "corrida" = un turno completo, identificado por `run_id`),
+  con título (el mensaje), sesión, tiempo relativo y puntos de estado
+  (verde/rojo si hubo error) — igual que el historial de ejecuciones de n8n.
+- **Diagrama del flujo** (canvas SVG con posiciones fijas) — nodos:
+  Cliente → Orquestador → (Modelo / Memoria / Servicio Técnico / **Ventas**,
+  esta última punteada porque `Agente_Ventas` no existe todavía) →
+  Servicio Técnico → (Modelo / Memoria / sus 6 tools) → Supabase.
+  - **Modo "en vivo"** (por defecto): cada evento real hace pulsar de forma
+    pasajera el nodo/conexión correspondiente.
+  - **Al hacer click en una corrida del sidebar**: el diagrama se congela
+    mostrando SOLO lo que participó en ESE turno puntual (coloreado), con
+    lo demás apagado — click en un nodo muestra su detalle exacto
+    ("participó" / "no participó en esta corrida").
+- **Log de detalle** (abajo) — el payload completo de entrada/salida de
+  cada evento, sin resumir.
+
+Arquitectura backend (piezas nuevas):
+
+1. **`tools/eventos_agente.py`** — bus de eventos en memoria (una cola
+   `queue.Queue` thread-safe por cliente SSE conectado) + historial de las
+   últimas 50 corridas (`iniciar_corrida`, `listar_corridas`,
+   `obtener_corrida`). `publicar_evento(...)` nunca bloquea al agente real:
+   si un suscriptor está lleno, se descarta su evento más viejo.
+2. **`llm_loop.py`** y **`sesiones.py`** instrumentados — publican un evento
+   en cada intento de modelo, cada tool, y cada lectura/escritura de memoria
+   (con latencia y payload). El parámetro `contexto={"agente", "session_id",
+   "run_id"}` de `run_agent_loop` solo ETIQUETA esos eventos — no cambia el
+   comportamiento real del loop. `run_id` se genera una vez por
+   `POST /api/chat` (`web/app.py`) y se propaga a través de
+   `orquestador.run()` → `servicio_tecnico_agent.run()`, así los eventos de
+   AMBOS agentes en un mismo turno quedan bajo la misma corrida.
+3. **`GET /api/flujo/stream`** (Server-Sent Events, `EventSource` nativo) +
+   **`GET /api/flujo/corridas`** / **`GET /api/flujo/corridas/{run_id}`**
+   para el sidebar de historial.
+
+**Limitación conocida:** tanto el bus de eventos como el historial de
+corridas viven en memoria de UN solo proceso — si en el futuro despliegas
+con varios workers, cada worker tendría su propia copia y un dashboard
+conectado a un worker no vería lo que procesa otro. Igual que la limitación
+ya documentada de `_propuestas_pendientes` en `tools/citas_tools.py`,
+aceptable para desarrollo/debug; en producción con varios workers
+necesitaría un backend de pub/sub y almacenamiento real (Redis, etc.).
+
 ## Cómo correr
+
+**Antes de la primera ejecución** aplica las migraciones pendientes en
+Supabase (hoy faltan la 004 y la 005; sin la 005 cada turno falla al guardar
+y `/ready` responde 503). Pasos en `docs/PLAN_DE_MEJORAS.md`, Fase 9.4.
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # y completa tus valores reales
-python main.py
+cp .env.example .env   # y completa tus valores reales (incluida API_KEY)
+python main.py         # consola: chatea como si fueras el cliente de WhatsApp
 ```
 
-Puedes chatear por consola como si fueras el cliente de WhatsApp — ya no
-hace falta ningún flujo de autenticación previo.
+Si falta una variable obligatoria, el programa no arranca y dice cuál
+(`config.py`).
 
-## Cómo correr la interfaz de chat
-
-Alternativa a la consola para probar los agentes desde el navegador:
+## Cómo correr la interfaz web (dashboard + chat de prueba)
 
 ```bash
 uvicorn web.app:app --reload
 ```
 
-Abre `http://127.0.0.1:8000`. Desde la barra lateral puedes escribir un
-"teléfono" (session_id) distinto por conversación para simular varios
-clientes en paralelo, igual que harías abriendo varias sesiones de
-`main.py`. El historial real de cada agente se guarda en la tabla
-`conversaciones` de Supabase (ver `sesiones.py`), así que sobrevive a
-reinicios del servidor — el historial que se ve en pantalla se guarda además
-en `localStorage` del navegador solo como conveniencia visual, no como
-fuente de verdad.
+Abre `http://127.0.0.1:8000`. Si definiste `API_KEY`, el dashboard la pide
+una vez y la recuerda en este navegador. Desde la barra lateral puedes
+escribir un "teléfono" (session_id) distinto por conversación para simular
+varios clientes. El historial real de cada agente se guarda en la columna
+`historiales` de la tabla `conversaciones` de Supabase (ver `sesiones.py`);
+lo que se ve en pantalla se guarda además en `localStorage` solo como
+conveniencia visual.
 
-Antes de correrlo la primera vez en un proyecto de Supabase nuevo, crea la
-tabla de memoria ejecutando `sql/001_conversaciones.sql` en el SQL Editor de
-Supabase (en el proyecto actual ya está creada).
+Endpoints de operación (sin clave, para el hosting): `GET /health` (el
+proceso vive) y `GET /ready` (Supabase responde y el esquema está al día).
+Métricas: `GET /api/metricas` (con clave).
 
-## Correr los tests (no necesitan credenciales)
+## Correr con Docker
 
 ```bash
-python tests/test_llm_loop.py
-python tests/test_citas_repository.py
-python tests/test_sesiones.py
+docker build -t tecnielectronics .
+docker run --env-file .env -p 8000:8000 tecnielectronics
 ```
 
-El primero simula las respuestas del modelo — valida solo la mecánica del
-loop (detectar tool_calls, ejecutar la función Python, reinyectar el
-resultado), no el comportamiento real del prompt. El segundo valida, con
-`requests` mockeado (sin tocar Supabase real), que `formatear_fila` muestre
-columnas dinámicas, que `crear_evento`/`actualizar_evento` traduzcan la
-violación del constraint de solapamiento en un mensaje amable, que
-`consultar_eventos` agrupe la disponibilidad por día, y que la nota de
-optimización de flujo y la fecha actual sigan agregadas al prompt del Agente
-de Servicio Técnico. El tercero valida que la memoria conversacional
-lea/escriba correctamente en Supabase. Para probar el comportamiento real
-del prompt, usa `main.py` o la interfaz de chat con casos reales y
-compáralos contra lo que hacía el workflow de n8n (mismos edge cases:
-cancelación solo con confirmación explícita, fecha ambigua, cliente que se
-arrepiente a mitad de flujo, etc.).
+Un solo worker a propósito (ver el comentario en el `Dockerfile`).
+
+## Tests y calidad (no necesitan credenciales)
+
+```bash
+python tests/correr_todos.py        # todos los scripts, cada uno en su proceso
+# o, con las herramientas de desarrollo:
+pip install -r requirements-dev.txt
+pytest                              # mismos scripts vía tests/pytest_suite.py
+ruff check .
+mypy .
+```
+
+Cada `tests/test_*.py` es un script con asserts que simula el LLM y
+Supabase (no gasta cuota ni toca datos reales), salvo
+`test_integracion_postgres.py`, que aplica todas las migraciones sobre un
+PostgreSQL real (`TEST_DATABASE_URL`, o un clúster temporal con `initdb`
+si hay PostgreSQL instalado; si no, se omite). La CI
+(`.github/workflows/ci.yml`) corre todo en cada push.
+
+Los tests validan la mecánica, no el comportamiento real del prompt. Para eso,
+usa `main.py` o la interfaz web con casos reales (cancelación solo con
+confirmación explícita, fecha ambigua, cliente que se arrepiente a mitad de
+flujo, conversación de más de 12 turnos, etc.).
 
 ## Sobre los modelos de OpenRouter
 
@@ -312,27 +441,33 @@ disponible de la misma forma para todos los modelos.
 
 ```
 .
-├── llm_loop.py                  # loop genérico de tool use (reemplaza el nodo AI Agent)
+├── llm_loop.py                  # loop genérico de tool use: fallback, disyuntor, presupuesto de turno, saneo
+├── contexto_conversacion.py     # ventana de contexto, ficha y recorte al guardar (Fase 6)
+├── config.py                    # validación de variables de entorno al arrancar
+├── sesiones.py                  # AlmacenSesiones: historiales por agente en Supabase + lock por sesión
 ├── main.py                      # arnés de pruebas por consola
-├── sesiones.py                  # AlmacenSesiones: memoria conversacional en Supabase (consola y web)
-├── sql/
-│   ├── 001_conversaciones.sql   # esquema de la tabla de memoria conversacional
-│   └── 002_disponibilidad_sin_calendar.sql  # índices + constraint de no-solapamiento
 ├── agents/
-│   ├── orquestador.py           # Agente Conversacional (Orquestador)
-│   └── servicio_tecnico_agent.py# Agente de Servicio Técnico (+ nota de optimización de flujo)
+│   ├── orquestador.py           # Orquestador + registro de sub-agentes (SUBAGENTES)
+│   └── servicio_tecnico_agent.py# Agente de Servicio Técnico (+ notas, ficha de contexto)
 ├── tools/
-│   ├── supabase_client.py       # wrapper genérico del REST de Supabase (sin lógica de negocio)
-│   ├── citas_repository.py      # CRUD de la tabla de citas sobre supabase_client
-│   ├── citas_tools.py           # Consultar/Crear/Actualizar/Eliminar_evento (solo Supabase, sin Calendar)
-│   └── catalog_tools.py         # Servicio_tecnico, Consultar_servicio_agendado
+│   ├── supabase_client.py       # wrapper del REST de Supabase (timeouts, reintentos de lectura)
+│   ├── citas_repository.py      # acceso a la tabla de citas
+│   ├── citas_tools.py           # Consultar/Crear/Actualizar/Eliminar_evento (reglas de agenda, confirmación)
+│   ├── catalog_tools.py         # Servicio_tecnico, Consultar_servicio_agendado, leer_servicio
+│   ├── validacion_tools.py      # modelos Pydantic de argumentos + verificación de coherencia
+│   ├── tecnicos_repository.py   # técnicos (solo dashboard)
+│   ├── eventos_agente.py        # bus de eventos + logs JSON con PII enmascarada
+│   └── metricas.py              # contadores y alertas
 ├── web/
-│   ├── app.py                   # FastAPI: interfaz de chat por HTTP
-│   └── static/                  # index.html, chat.css, chat.js (sin build step)
-├── tests/
-│   ├── test_llm_loop.py         # valida la mecánica del loop sin gastar cuota real
-│   ├── test_citas_repository.py # columnas dinámicas, rollback de crear_evento, nota de flujo
-│   └── test_sesiones.py         # memoria conversacional en Supabase (mockeado)
-├── .env.example
-└── requirements.txt
+│   ├── app.py                   # FastAPI: /api/* (con clave), /health, /ready, estáticos
+│   ├── seguridad.py             # API key y límite de mensajes por sesión
+│   └── static/                  # dashboard (index.html, api.js, chat/admin/flujo/dashboard .js/.css)
+├── supabase/migrations/         # migraciones en formato Supabase CLI (001–005)
+├── tests/                       # scripts de prueba + correr_todos.py + pytest_suite.py
+├── docs/PLAN_DE_MEJORAS.md      # plan, registro de cambios y guía para agregar Ventas
+├── Dockerfile, .dockerignore
+├── .github/workflows/ci.yml
+├── pyproject.toml               # configuración de Ruff, Mypy y pytest
+├── requirements.txt, requirements-dev.txt
+└── .env.example
 ```

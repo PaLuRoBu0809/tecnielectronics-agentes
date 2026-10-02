@@ -1,5 +1,10 @@
-openai>=1.40.0          # cliente OpenAI-compatible, usado apuntando a OpenRouter
-requests>=2.31.0        # llamadas REST a Supabase
-python-dotenv>=1.0.1    # carga de .env
-fastapi>=0.111.0        # interfaz de chat por HTTP (web/app.py)
-uvicorn[standard]>=0.30.0   # servidor ASGI para correr web/app.py
+# Dependencias de ejecución. Rangos acotados a la versión MAYOR probada
+# (docs/PLAN_DE_MEJORAS.md, Fase 9): una versión mayor nueva puede cambiar la
+# API (ej. openai 1.x -> 3.x) y debe adoptarse a propósito, corriendo los tests.
+openai>=3.19,<4             # cliente OpenAI-compatible, usado apuntando a OpenRouter
+requests>=2.34,<3           # llamadas REST a Supabase
+python-dotenv>=1.2,<2       # carga de .env
+fastapi>=0.141,<1           # API HTTP (web/app.py)
+pydantic>=2.13,<3           # validación de argumentos de tools (tools/validacion_tools.py)
+anyio>=4.15,<5              # stream SSE del panel (web/app.py)
+uvicorn[standard]>=0.54,<1  # servidor ASGI para correr web/app.py

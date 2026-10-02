@@ -3,48 +3,229 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>TecniElectronics — Panel de pruebas de agentes</title>
+  <title>TecniElectronics — Dashboard</title>
+  <link rel="stylesheet" href="/dashboard.css" />
   <link rel="stylesheet" href="/chat.css" />
+  <link rel="stylesheet" href="/admin.css" />
 </head>
 <body>
   <!--
-    Panel de pruebas de los agentes (Orquestador + Servicio Técnico) por
-    chat. Página estática, sin build step: toda la lógica vive en chat.js y
-    habla con la API de FastAPI (web/app.py) vía fetch().
+    Dashboard único con 4 pestañas (Citas / Ventas / Chat de prueba / Flujo
+    en vivo), sin build step ni framework — cada pestaña ya está presente en
+    el DOM desde que carga la página; dashboard.js solo decide cuál se ve
+    (display), no recarga nada. La lógica de cada pestaña vive en su propio
+    archivo, reutilizado tal cual del resto del proyecto:
+      - Citas  -> admin.js + admin.css (calendario + tabla de registros).
+      - Chat   -> chat.js + chat.css (panel de pruebas de los agentes).
+      - Flujo  -> flujo.js (nuevo: consume el stream de eventos del agente).
+    admin.js/chat.js/flujo.js se cargan como módulos ES (`type="module"`)
+    para que cada uno tenga su propio scope — evita que sus variables de
+    nivel superior (ej. ambos declaran `const el`) choquen entre sí al
+    convivir ahora en una sola página.
   -->
-  <div class="app">
-    <aside class="sidebar">
-      <h1>TecniElectronics</h1>
-      <p class="subtitulo">Panel de pruebas de agentes</p>
+  <div class="dashboard">
+    <header class="dashboard-header">
+      <h1 class="dashboard-titulo">TECHNO DASHBOARD</h1>
+      <nav class="dashboard-nav">
+        <button class="tab-btn activo" data-tab="citas">Citas</button>
+        <button class="tab-btn" data-tab="ventas">Ventas</button>
+        <button class="tab-btn" data-tab="chat">Chat prueba</button>
+        <button class="tab-btn" data-tab="flujo">Flujo en vivo</button>
+      </nav>
+    </header>
 
-      <label for="session-input">Teléfono del cliente simulado</label>
-      <div class="session-row">
-        <input id="session-input" type="text" placeholder="3000000000" />
-        <button id="session-switch-btn" title="Cambiar o crear sesión">Ir</button>
-      </div>
+    <main class="dashboard-main">
+      <!-- ==================== CITAS ==================== -->
+      <section class="dashboard-vista" id="vista-citas" data-vista="citas">
+        <div class="app-admin">
+          <main class="admin-main">
+            <section class="panel-calendario">
+              <div class="calendario-toolbar">
+                <button id="mes-anterior-btn" class="secundario" title="Mes anterior">‹</button>
+                <h2 id="mes-actual-label"></h2>
+                <button id="mes-siguiente-btn" class="secundario" title="Mes siguiente">›</button>
+                <button id="mes-hoy-btn" class="secundario">Hoy</button>
+              </div>
+              <div class="calendario-grid" id="calendario-grid"></div>
+            </section>
 
-      <button id="new-session-btn" class="secundario">+ Nueva conversación</button>
+            <aside class="panel-dia" id="panel-dia" hidden>
+              <div class="panel-dia-header">
+                <h3 id="panel-dia-titulo"></h3>
+                <button id="panel-dia-cerrar-btn" class="secundario" title="Cerrar">✕</button>
+              </div>
+              <ul id="panel-dia-lista" class="panel-dia-lista"></ul>
+            </aside>
 
-      <div class="sesiones-conocidas">
-        <p class="etiqueta">Conversaciones recientes</p>
-        <ul id="sesiones-lista"></ul>
-      </div>
-    </aside>
+            <section class="panel-registros">
+              <div class="registros-toolbar">
+                <h2>Todos los registros</h2>
+                <input id="filtro-registros" type="text" placeholder="Buscar por cliente, teléfono o servicio…" />
+                <select id="filtro-estado">
+                  <option value="">Todos los estados</option>
+                </select>
+                <span id="registros-contador" class="etiqueta"></span>
+              </div>
+              <div class="tabla-wrapper">
+                <table id="tabla-registros">
+                  <thead>
+                    <tr>
+                      <th>Estado</th>
+                      <th>Cliente</th>
+                      <th>Teléfono</th>
+                      <th>Servicio</th>
+                      <th>Técnico</th>
+                      <th>Inicio</th>
+                      <th>Fin</th>
+                      <th>Descripción</th>
+                      <th>ID</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tabla-registros-body"></tbody>
+                </table>
+              </div>
+            </section>
+          </main>
+        </div>
+      </section>
 
-    <main class="chat">
-      <header class="chat-header">
-        <span id="chat-session-label">Sesión: —</span>
-      </header>
+      <!-- ==================== VENTAS: pedidos de orders (ver ventas.js) ==================== -->
+      <section class="dashboard-vista" id="vista-ventas" data-vista="ventas" hidden>
+        <div class="registros-toolbar">
+          <h2>Pedidos</h2>
+          <input id="filtro-pedidos" type="text" aria-label="Buscar pedidos" placeholder="Buscar por pedido, cliente, teléfono, ciudad o producto…" />
+          <select id="filtro-pago" aria-label="Filtrar por estado de pago">
+            <option value="">Todos los pagos</option>
+          </select>
+          <select id="filtro-envio" aria-label="Filtrar por estado de envío">
+            <option value="">Todos los envíos</option>
+          </select>
+          <span id="pedidos-contador" class="etiqueta"></span>
+          <button id="pedidos-actualizar-btn" class="secundario" title="Volver a cargar los pedidos">↻ Actualizar</button>
+        </div>
 
-      <div id="mensajes" class="mensajes" aria-live="polite"></div>
+        <div class="tabla-wrapper">
+          <table id="tabla-pedidos">
+            <thead>
+              <tr>
+                <th>Pedido</th>
+                <th>Fecha</th>
+                <th>Cliente</th>
+                <th>Entrega</th>
+                <th>Productos</th>
+                <th>Total</th>
+                <th>Método</th>
+                <th>Pago</th>
+                <th>Envío</th>
+              </tr>
+            </thead>
+            <tbody id="tabla-pedidos-body"></tbody>
+          </table>
+          <div class="ventas-vacio" id="pedidos-vacio" hidden>
+            <p class="ventas-vacio-icono">🛒</p>
+            <h3>Todavía no hay pedidos</h3>
+            <p class="ventas-vacio-texto">
+              Los pedidos que los clientes confirmen con el agente de ventas aparecerán aquí.
+            </p>
+          </div>
+        </div>
+      </section>
 
-      <form id="form-mensaje" class="form-mensaje">
-        <textarea id="input-mensaje" rows="1" placeholder="Escribe como si fueras el cliente…"></textarea>
-        <button type="submit">Enviar</button>
-      </form>
+      <!-- ==================== CHAT DE PRUEBA ==================== -->
+      <section class="dashboard-vista" id="vista-chat" data-vista="chat" hidden>
+        <div class="app">
+          <aside class="sidebar">
+            <h1>TecniElectronics</h1>
+            <p class="subtitulo">Panel de pruebas de agentes</p>
+
+            <label for="session-input">Teléfono del cliente simulado</label>
+            <div class="session-row">
+              <input id="session-input" type="text" placeholder="3000000000" />
+              <button id="session-switch-btn" title="Cambiar o crear sesión">Ir</button>
+            </div>
+
+            <button id="new-session-btn" class="secundario">+ Nueva conversación</button>
+
+            <div class="sesiones-conocidas">
+              <p class="etiqueta">Conversaciones recientes</p>
+              <ul id="sesiones-lista"></ul>
+            </div>
+          </aside>
+
+          <main class="chat">
+            <header class="chat-header">
+              <span id="chat-session-label">Sesión: —</span>
+            </header>
+
+            <div id="mensajes" class="mensajes" aria-live="polite"></div>
+
+            <form id="form-mensaje" class="form-mensaje">
+              <textarea id="input-mensaje" rows="1" placeholder="Escribe como si fueras el cliente…"></textarea>
+              <button type="submit">Enviar</button>
+            </form>
+          </main>
+        </div>
+      </section>
+
+      <!-- ==================== FLUJO EN VIVO ==================== -->
+      <section class="dashboard-vista" id="vista-flujo" data-vista="flujo" hidden>
+        <div class="flujo-layout">
+          <!-- Sidebar estilo "historial de ejecuciones" de n8n: un ítem por
+               cada mensaje real del cliente (una "corrida" = un run_id, ver
+               tools/eventos_agente.py). Click en uno congela el diagrama en
+               el estado de ESA corrida puntual. -->
+          <aside class="flujo-sidebar">
+            <div class="flujo-sidebar-header">
+              <h3>Corridas</h3>
+              <label class="flujo-en-vivo-toggle">
+                <input type="checkbox" id="flujo-en-vivo" checked />
+                En vivo
+              </label>
+            </div>
+            <ul class="flujo-corridas-lista" id="flujo-corridas-lista"></ul>
+          </aside>
+
+          <div class="flujo-principal">
+            <div class="flujo-toolbar">
+              <span id="flujo-estado" class="flujo-estado">● Conectando…</span>
+              <span id="flujo-corrida-titulo" class="etiqueta"></span>
+              <button id="flujo-volver-vivo-btn" class="secundario" hidden>● Volver a en vivo</button>
+              <span id="flujo-nodo-filtro" class="etiqueta flujo-filtro-activo" hidden></span>
+              <label class="flujo-autoscroll-label">
+                <input type="checkbox" id="flujo-autoscroll" checked />
+                Auto-scroll
+              </label>
+            </div>
+
+            <!-- Canvas estilo n8n: nodos fijos + conexiones SVG. En modo "en
+                 vivo" pulsan de forma pasajera con cada evento real; al
+                 seleccionar una corrida, quedan fijos (verde/rojo = sí
+                 participó, gris = no participó en ESE turno). -->
+            <div class="flujo-canvas-wrapper">
+              <div class="flujo-canvas" id="flujo-canvas">
+                <svg id="flujo-svg" class="flujo-svg"></svg>
+              </div>
+            </div>
+
+            <div class="flujo-detalle-nodo" id="flujo-detalle-nodo" hidden>
+              <div class="flujo-detalle-header">
+                <strong id="flujo-detalle-titulo"></strong>
+                <button id="flujo-detalle-cerrar-btn" class="secundario" title="Cerrar">✕</button>
+              </div>
+              <div id="flujo-detalle-cuerpo" class="flujo-detalle-cuerpo"></div>
+            </div>
+
+            <div class="flujo-log" id="flujo-log"></div>
+          </div>
+        </div>
+      </section>
     </main>
   </div>
 
-  <script src="/chat.js"></script>
+  <script type="module" src="/chat.js"></script>
+  <script type="module" src="/admin.js"></script>
+  <script type="module" src="/ventas.js"></script>
+  <script type="module" src="/flujo.js"></script>
+  <script src="/dashboard.js"></script>
 </body>
 </html>
