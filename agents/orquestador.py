@@ -267,9 +267,11 @@ es que el cliente conozca y aproveche TODO lo que ofrece la empresa.
 4. UNA DELEGACIÓN POR MENSAJE: invoca un subagente UNA sola vez por mensaje
    del cliente y pásale lo que el cliente escribió. Nunca inventes preguntas
    ni respuestas en nombre del cliente. Si el subagente pide datos o
-   confirmación, es el CLIENTE quien contesta en su siguiente mensaje:
-   reenvía la respuesta y espera. El sistema bloquea una segunda invocación
-   en el mismo turno.
+   confirmación, es el CLIENTE quien contesta en su siguiente mensaje: tu
+   respuesta final es el texto COMPLETO del subagente, nunca una nota tuya
+   sobre lo que estás haciendo (ej. "[Esperando al cliente]"). El sistema
+   bloquea una segunda invocación en el mismo turno y, si no reenvías la
+   respuesta del subagente, la envía él.
 """
 
 # ---------------------------------------------------------------------------
@@ -359,6 +361,22 @@ TOOLS_SCHEMA = construir_tools_schema()
 SYSTEM_PROMPT = construir_system_prompt()
 
 
+def respuesta_para_cliente(texto_orquestador: str, texto_subagente: str) -> str:
+    """Garantía de código de la Regla 2 del prompt ("reenvía la respuesta
+    del subagente tal cual"). Bug real (2026-10-02): tras recibir la
+    respuesta de Ventas, el modelo del orquestador respondió una nota
+    inventada "[Esperando la siguiente entrada del cliente...]" y el cliente
+    nunca vio la respuesta.
+
+    Si el texto final del orquestador contiene la respuesta del subagente,
+    se respeta tal cual: puede llevar agregada la línea de venta cruzada o la
+    del tema pendiente, que el prompt permite. Si no la contiene (la resumió,
+    la cambió o la reemplazó), se envía la del subagente."""
+    if texto_subagente.strip() and texto_subagente.strip() not in (texto_orquestador or ""):
+        return texto_subagente
+    return texto_orquestador
+
+
 def run(
     mensaje_cliente: str,
     session_id: str,
@@ -398,6 +416,7 @@ def run(
     # dos veces. Además, repetir una delegación puede repetir escrituras
     # (añadir al carrito dos veces).
     delegaciones: list = []
+    respuesta_subagente: list = []  # el texto que devolvió el sub-agente en este turno
 
     def _tool_para(sub: SubAgente) -> Callable:
         # El nombre del parámetro (`mensaje_cliente`) debe coincidir con el
@@ -419,6 +438,7 @@ def run(
                 presupuesto=presupuesto,
             )
             historiales[sub.clave_historial] = nuevo_historial
+            respuesta_subagente.append(texto)
             return texto
 
         return tool
@@ -438,6 +458,11 @@ def run(
         contexto={"agente": "Orquestador", "session_id": session_id, "run_id": run_id, "presupuesto": presupuesto},
         reenviar_ultima_tool_si_se_agota=True,
     )
+    if respuesta_subagente:
+        respuesta = respuesta_para_cliente(respuesta, respuesta_subagente[0])
+        # El historial guardado debe decir lo que el cliente realmente vio.
+        if ventana_actualizada and ventana_actualizada[-1].get("role") == "assistant":
+            ventana_actualizada[-1] = {**ventana_actualizada[-1], "content": respuesta}
     historiales[CLAVE_HISTORIAL_ORQUESTADOR] = descartados + ventana_actualizada
     # Un evento por turno con razón de parada, llamadas, duración, tokens y
     # costo (Fase 8): alimenta los logs JSON y las métricas/alertas.

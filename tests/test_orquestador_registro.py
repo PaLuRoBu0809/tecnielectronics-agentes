@@ -156,4 +156,34 @@ assert bloqueo["content"].startswith("(interno) BLOQUEADO") and "Agente_Ventas" 
 assert texto == "Tenemos el teclado X a $100."
 print("✅ Una delegación por mensaje: un segundo intento en el mismo turno se bloquea sin ejecutar al sub-agente.")
 
+# ---------------------------------------------------------------------------
+# 5) La respuesta del sub-agente siempre le llega al cliente (bug real del
+#    2026-10-02: el orquestador respondió "[Esperando la siguiente entrada
+#    del cliente...]" en vez de reenviar lo que dijo Ventas).
+# ---------------------------------------------------------------------------
+SUB = "Tenemos el teclado X a $100."
+inventada = "[Esperando la siguiente entrada del cliente para continuar con el agente de ventas]"
+assert orquestador.respuesta_para_cliente(inventada, SUB) == SUB, "Una nota inventada se reemplaza"
+assert orquestador.respuesta_para_cliente("Te ofrecemos teclados.", SUB) == SUB, "Un resumen también"
+con_venta_cruzada = SUB + "\n\nPor cierto, también te agendamos servicio técnico. 🛠️"
+assert orquestador.respuesta_para_cliente(con_venta_cruzada, SUB) == con_venta_cruzada, (
+    "Reenviar la respuesta completa + una línea permitida se respeta"
+)
+
+llamadas_ventas.clear()
+respuestas = iter([_respuesta(tool_calls=[llamada_ventas]), _respuesta(inventada)])
+llm_loop.reiniciar_disyuntor()
+with (
+    patch.object(orquestador, "SUBAGENTES", registro),
+    patch.object(orquestador, "TOOLS_SCHEMA", schema),
+    patch("llm_loop.OpenAI") as mock_openai,
+):
+    mock_openai.return_value.chat.completions.create.side_effect = lambda **kw: next(respuestas)
+    texto, historiales = orquestador.run("quiero un teclado", session_id="3001", historiales={})
+assert texto == SUB, texto
+assert historiales["orquestador"][-1] == {"role": "assistant", "content": SUB}, (
+    "El historial guarda lo que el cliente realmente vio"
+)
+print("✅ Si el orquestador no reenvía la respuesta del sub-agente (o la cambia), el sistema la envía igual.")
+
 print("\n✅ Todos los tests del registro de sub-agentes pasaron.")
