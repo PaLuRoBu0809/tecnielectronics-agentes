@@ -501,6 +501,12 @@ assert servicio_tecnico_agent.SYSTEM_PROMPT.endswith(servicio_tecnico_agent.NOTA
 assert servicio_tecnico_agent.SYSTEM_PROMPT.startswith(servicio_tecnico_agent.ORIGINAL_SYSTEM_PROMPT), (
     "SYSTEM_PROMPT debe ser el prompt original intacto + las notas, en ese orden"
 )
+assert servicio_tecnico_agent.NOTA_ESTADO_DEL_EQUIPO in servicio_tecnico_agent.SYSTEM_PROMPT, (
+    "La nota del estado del equipo (Notas_servicio) debe estar en el prompt"
+)
+assert "Notas_servicio" not in servicio_tecnico_agent.ORIGINAL_SYSTEM_PROMPT, (
+    "El prompt original no se toca: Notas_servicio solo aparece en la nota agregada"
+)
 
 consultar_eventos_schema = next(
     t["function"] for t in servicio_tecnico_agent.TOOLS_SCHEMA if t["function"]["name"] == "Consultar_eventos"

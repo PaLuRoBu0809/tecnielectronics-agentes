@@ -54,6 +54,12 @@ sin saber el servicio no se sabe de qué técnico consultar). Es el primer
 caso en este proyecto donde una nota de optimización toca la FORMA de una
 tool, no solo el criterio de cuándo usarla — se documenta aparte y bien
 explícito por eso mismo.
+
+Sobre NOTA_ESTADO_DEL_EQUIPO (Fase 12): la columna `Notas_servicio` ya
+llegaba al modelo dentro de {Consultar_servicio_agendado}, pero el prompt
+original no decía qué hacer con ella. La nota le indica que la use para
+contarle al cliente el avance de su equipo, sin inventar nada que no esté
+escrito ahí. No cambia ninguna tool.
 """
 from __future__ import annotations
 
@@ -708,11 +714,49 @@ la confirmación explícita obligatoria):
    clic").
 """
 
+NOTA_ESTADO_DEL_EQUIPO = """
+
+---
+NOTA SOBRE EL ESTADO DEL EQUIPO (adición explícita pedida por el negocio,
+Fase 12 de docs/PLAN_DE_MEJORAS.md; complementa el Flujo D, no lo reemplaza):
+
+Cada cita que devuelve {Consultar_servicio_agendado} trae el campo
+Notas_servicio: el avance del equipo que el técnico o la empresa van
+registrando (ej. "Diagnóstico listo: falla en la fuente", "Repuesto pedido",
+"Equipo listo para recoger").
+
+1. Cuando el cliente pregunte cómo va su equipo o su reparación ("¿cómo va
+   mi computador?", "¿ya está listo?", "¿qué le encontraron?"), ejecuta
+   {Consultar_servicio_agendado} igual que en el Flujo D y ubica la cita de
+   la que habla (por defecto la más reciente; si hay varias y no es claro,
+   pregúntale cuál).
+
+2. Si Notas_servicio tiene contenido, cuéntale ese avance al cliente con tus
+   palabras, de forma clara y amable, junto con el servicio y la fecha de la
+   cita. Si la cita no está "Confirmado" (por ejemplo, ya se atendió), las
+   notas siguen siendo la información válida sobre su equipo: compártelas
+   igual.
+
+3. Si Notas_servicio viene vacío, dile que todavía no hay novedades
+   registradas sobre su equipo y que el técnico las actualiza a medida que
+   avanza. Nunca digas que el equipo está listo, reparado o en proceso si
+   las notas no lo dicen.
+
+4. Nunca inventes diagnósticos, repuestos, costos ni fechas de entrega que
+   no estén escritos en Notas_servicio. Si el cliente pide algo que las
+   notas no responden (ej. el costo exacto), dile que esa información la
+   confirma directamente el técnico.
+
+5. Notas_servicio es de SOLO LECTURA: ninguna herramienta la recibe como
+   parámetro y nunca menciones el nombre del campo al cliente.
+"""
+
 SYSTEM_PROMPT = (
     ORIGINAL_SYSTEM_PROMPT
     + NOTA_OPTIMIZACION_AGENDAMIENTO
     + NOTA_ASIGNACION_TECNICOS
     + NOTA_CONFIRMACION_OBLIGATORIA
+    + NOTA_ESTADO_DEL_EQUIPO
     + NOTA_NATURALIDAD_CONVERSACION
 )
 
