@@ -134,7 +134,7 @@ def pagos_de_referencia(referencia: str) -> list:
     resp = requests.get(
         f"{API}/v1/payments/search",
         headers=_cabeceras(),
-        params={"external_reference": referencia, "sort": "date_created", "criteria": "desc", "limit": 20},
+        params={"external_reference": referencia, "sort": "date_created", "criteria": "desc", "limit": "20"},
         timeout=_timeout(),
     )
     resp.raise_for_status()

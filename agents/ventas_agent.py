@@ -344,19 +344,17 @@ def _tool_functions_para_sesion(session_id: str, id_turno: str) -> dict:
     se inyecta en todo lo que toca datos del cliente; `id_turno` en las
     escrituras de órdenes (confirmación de dos turnos). Cada función va
     envuelta en `con_validacion` con los modelos de Ventas."""
-    con_sesion = {"session_id": session_id}
-    con_turno = {"session_id": session_id, "id_turno": id_turno}
     funciones: dict[str, Callable] = {
         "Categorias_inventario": inventario_tools.categorias_inventario,
         "Inventario": inventario_tools.inventario,
-        "Anadir_elemento": partial(carrito_tools.anadir_elemento, **con_sesion),
-        "Consultar_carrito": partial(carrito_tools.consultar_carrito, **con_sesion),
-        "Modificar_elemento": partial(carrito_tools.modificar_elemento, **con_sesion),
-        "Eliminar_elemento": partial(carrito_tools.eliminar_elemento, **con_sesion),
-        "Crear_orden": partial(ordenes_tools.crear_orden, **con_turno),
-        "Consultar_orden": partial(ordenes_tools.consultar_orden, **con_sesion),
-        "Modificar_orden": partial(ordenes_tools.modificar_orden, **con_turno),
-        "Cancelar_orden": partial(ordenes_tools.cancelar_orden, **con_turno),
+        "Anadir_elemento": partial(carrito_tools.anadir_elemento, session_id=session_id),
+        "Consultar_carrito": partial(carrito_tools.consultar_carrito, session_id=session_id),
+        "Modificar_elemento": partial(carrito_tools.modificar_elemento, session_id=session_id),
+        "Eliminar_elemento": partial(carrito_tools.eliminar_elemento, session_id=session_id),
+        "Crear_orden": partial(ordenes_tools.crear_orden, session_id=session_id, id_turno=id_turno),
+        "Consultar_orden": partial(ordenes_tools.consultar_orden, session_id=session_id),
+        "Modificar_orden": partial(ordenes_tools.modificar_orden, session_id=session_id, id_turno=id_turno),
+        "Cancelar_orden": partial(ordenes_tools.cancelar_orden, session_id=session_id, id_turno=id_turno),
     }
     return {nombre: con_validacion(nombre, funcion, ARGUMENTOS_VENTAS) for nombre, funcion in funciones.items()}
 

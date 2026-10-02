@@ -187,7 +187,7 @@ def expandir_termino(termino: str, grupos_sinonimos: list) -> list:
         if busqueda in vistas:
             continue
         vistas.add(busqueda)
-        sinonimos_de_palabra = next((indice[f] for f in formas if f in indice), [])
+        sinonimos_de_palabra: list = next((indice[f] for f in formas if f in indice), [])
         grupos.append(list(dict.fromkeys([busqueda, *sinonimos_de_palabra])))  # sin duplicados, en orden
     return grupos
 
@@ -218,8 +218,13 @@ def sinonimos() -> list:
     return _sinonimos.obtener()
 
 
-def _decimal(valor) -> Optional[Decimal]:
-    return None if valor is None else Decimal(str(valor))
+def _decimal(valor) -> Decimal:
+    return Decimal(str(valor))
+
+
+def _decimal_opcional(valor) -> Optional[Decimal]:
+    """El rango de precios del resumen viene en NULL si no hubo coincidencias."""
+    return None if valor is None else _decimal(valor)
 
 
 def _producto(fila: dict) -> Producto:
@@ -253,8 +258,8 @@ def _buscar(grupos: list, category_id: Optional[str], precio_max: Optional[Decim
             OpcionMarca(m["marca"], int(m["cantidad"]), _decimal(m["precio_min"]), _decimal(m["precio_max"]))
             for m in resumen["marcas"]
         ),
-        precio_min=_decimal(resumen["precio_min"]),
-        precio_max=_decimal(resumen["precio_max"]),
+        precio_min=_decimal_opcional(resumen["precio_min"]),
+        precio_max=_decimal_opcional(resumen["precio_max"]),
     )
 
 

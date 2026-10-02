@@ -57,7 +57,7 @@ def resumen_orden(orden: dict) -> str:
         + (f" = {pesos(item['subtotal'])}" if item.get("subtotal") is not None else "")
         for item in items
     )
-    estado_pago = orden.get("payment_status")
+    estado_pago = orden.get("payment_status") or ""
     partes = [
         f"Pedido #{orden['order_number']} | creado: {orden.get('created_at', '')}",
         f"   ESTADO DE ENVÍO: {orden.get('shipping_status')}",

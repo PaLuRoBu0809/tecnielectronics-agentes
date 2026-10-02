@@ -181,7 +181,7 @@ with patch.object(supabase_client.requests, "post", return_value=error_otro_400)
         supabase_client.rpc_con_reglas("crear_orden_desde_carrito", {})
         raise AssertionError("Debía propagar el HTTPError")
     except ErrorNegocio:
-        raise AssertionError("Un error que no es de negocio no debe disfrazarse de regla del negocio")
+        raise AssertionError("Un error que no es de negocio no debe disfrazarse de regla del negocio") from None
     except requests.exceptions.HTTPError:
         pass
 
