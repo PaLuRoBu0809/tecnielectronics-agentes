@@ -1,0 +1,35 @@
+# Configuración de herramientas (docs/PLAN_DE_MEJORAS.md, Fase 9.5).
+# No es un paquete instalable: las dependencias están en requirements*.txt.
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = [".tmp"]
+
+[tool.ruff.lint]
+# E/W: estilo, F: errores reales (nombres no definidos, imports sin usar),
+# B: trampas comunes (argumentos mutables por defecto, excepciones mudas).
+select = ["E", "F", "W", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# Los prompts de negocio son transcripciones fieles: sus líneas largas no se
+# reformatean.
+"agents/*.py" = ["E501"]
+# Los tests son scripts: importan después de ajustar sys.path y el entorno.
+"tests/*.py" = ["E402"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+# Modo laxo a propósito: el código no tiene anotaciones completas. Se
+# verifican las funciones anotadas y los errores evidentes; endurecer de a poco.
+check_untyped_defs = false
+warn_unused_ignores = true
+exclude = ["^tests/", "^\\.tmp/"]
+
+[tool.pytest.ini_options]
+# Los tests del proyecto son scripts (asserts a nivel de módulo). pytest los
+# corre a través de tests/pytest_suite.py, uno por proceso, para no mezclar
+# sus parches globales.
+testpaths = ["tests"]
+python_files = ["pytest_suite.py"]

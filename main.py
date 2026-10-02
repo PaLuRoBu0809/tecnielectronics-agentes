@@ -19,11 +19,13 @@ import logging
 from dotenv import load_dotenv
 
 from agents import orquestador
+from config import validar_configuracion
 from sesiones import AlmacenSesiones
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
 load_dotenv()
+validar_configuracion()
 
 _almacen = AlmacenSesiones()
 
@@ -33,7 +35,7 @@ def main():
     session_id = input("Teléfono del cliente a simular (cualquier texto sirve como id): ").strip() or "3000000000"
     print(f"Sesión iniciada para {session_id}. Escribe 'salir' para terminar.\n")
 
-    sesion = _almacen.obtener(session_id)
+    historiales = _almacen.obtener(session_id)
 
     while True:
         mensaje = input("Cliente: ").strip()
@@ -42,13 +44,12 @@ def main():
         if not mensaje:
             continue
 
-        respuesta, sesion["orq"], sesion["st"] = orquestador.run(
+        respuesta, historiales = orquestador.run(
             mensaje_cliente=mensaje,
             session_id=session_id,
-            orquestador_historial=sesion["orq"],
-            servicio_tecnico_historial=sesion["st"],
+            historiales=historiales,
         )
-        _almacen.guardar(session_id, sesion["orq"], sesion["st"])
+        _almacen.guardar(session_id, historiales)
         print(f"\nTecniElectronics: {respuesta}\n")
 
 

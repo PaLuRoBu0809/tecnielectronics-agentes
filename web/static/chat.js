@@ -12,6 +12,8 @@
  *   3. Permitir cambiar entre varias sesiones (teléfonos) simuladas.
  */
 
+import { apiFetch } from "./api.js";
+
 const STORAGE_KEY = "tecnielectronics_transcripts_v1";
 const SESION_POR_DEFECTO = "3000000000";
 
@@ -51,10 +53,41 @@ const el = {
   input: document.getElementById("input-mensaje"),
 };
 
+// Negrita (**x** o *x*, estilo WhatsApp) y enlaces. Lo demás va como texto.
+const PATRON_FORMATO = /(\*\*[^*\n]+\*\*|\*[^*\n]+\*|https?:\/\/[^\s<>()]+)/g;
+
+/** Texto del agente -> nodos del DOM con negritas y enlaces. Se construye
+ * con nodos (nunca innerHTML): el texto del modelo jamás se interpreta como
+ * HTML, así que no puede inyectar nada en la página. */
+function formatearTexto(texto) {
+  const fragmento = document.createDocumentFragment();
+  for (const parte of texto.split(PATRON_FORMATO)) {
+    if (!parte) continue;
+    if (/^https?:\/\//.test(parte)) {
+      const enlace = document.createElement("a");
+      enlace.href = parte;
+      enlace.textContent = parte;
+      enlace.target = "_blank";
+      enlace.rel = "noopener noreferrer";
+      fragmento.appendChild(enlace);
+    } else if (parte.length > 2 && parte.startsWith("*") && parte.endsWith("*")) {
+      // Solo los tokens capturados por PATRON_FORMATO empiezan y terminan en "*".
+      const negrita = document.createElement("strong");
+      negrita.textContent = parte.replace(/^\*+|\*+$/g, "");
+      fragmento.appendChild(negrita);
+    } else {
+      fragmento.appendChild(document.createTextNode(parte));
+    }
+  }
+  return fragmento;
+}
+
 function crearBurbuja(quien, texto) {
   const div = document.createElement("div");
   div.className = `burbuja burbuja-${quien}`;
-  div.textContent = texto;
+  // Lo que escribe el cliente se muestra tal cual; solo se formatea al agente.
+  if (quien === "cliente") div.textContent = texto;
+  else div.appendChild(formatearTexto(texto));
   return div;
 }
 
@@ -105,11 +138,15 @@ async function enviarMensaje(mensaje) {
   el.input.disabled = true;
 
   try {
-    const resp = await fetch("/api/chat", {
+    const resp = await apiFetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session_id: sesionActual, mensaje }),
     });
+    if (resp.status === 429) {
+      const datos = await resp.json().catch(() => ({}));
+      throw new Error(`Límite de mensajes alcanzado. ${datos.detail || ""}`.trim());
+    }
     if (!resp.ok) {
       throw new Error(`El servidor respondió ${resp.status}`);
     }
@@ -157,7 +194,7 @@ el.newSessionBtn.addEventListener("click", () => {
  * arranca en la primera sesión disponible o en la de por defecto. */
 async function iniciar() {
   try {
-    const resp = await fetch("/api/sesiones");
+    const resp = await apiFetch("/api/sesiones");
     if (resp.ok) {
       const datos = await resp.json();
       for (const id of datos.sesiones || []) {

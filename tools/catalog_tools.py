@@ -19,6 +19,7 @@ y para que una columna nueva en Supabase no requiera tocar este archivo.
 from __future__ import annotations
 
 import os
+from typing import Optional
 
 from tools import supabase_client
 from tools.citas_repository import leer_citas_por_session
@@ -48,6 +49,43 @@ def servicio_tecnico(consulta: str = "") -> str:
         return "ERROR: El catálogo de servicios técnicos está vacío."
 
     return "\n".join(supabase_client.formatear_fila(s) for s in servicios)
+
+
+def listar_catalogo() -> list:
+    """Catálogo completo de servicios técnicos como lista de dicts (`select=*`),
+    para consumo de la interfaz de administración — a diferencia de
+    `servicio_tecnico()`, que devuelve texto plano pensado para que lo lea el
+    LLM, esta función devuelve datos crudos para que el frontend arme la
+    tabla/mapeo servicio_id -> nombre por su cuenta.
+    """
+    return supabase_client.get_rows(_tabla_catalogo(), params={"select": "*"})
+
+
+def leer_servicio(servicio_id) -> Optional[dict]:
+    """Fila completa del catálogo para UN servicio_id puntual — a diferencia
+    de `servicio_tecnico()`, que trae el catálogo completo para que el LLM
+    elija, esta es una búsqueda puntual. La usan
+    `resolver_tecnico_para_servicio` (qué técnico lo atiende) y
+    `tools/citas_tools.py` (técnico + `duracion_minutos`, para validar la
+    cita en código antes de escribirla). `None` si no existe."""
+    filas = supabase_client.get_rows(
+        _tabla_catalogo(), params={"id": f"eq.{servicio_id}", "select": "*"}
+    )
+    return filas[0] if filas else None
+
+
+def resolver_tecnico_para_servicio(servicio_id) -> Optional[int]:
+    """Técnico responsable de un tipo de servicio (columna `tecnico_id` del
+    catálogo, ver `supabase/migrations/20260928000003_tecnicos.sql`) — la asignación es automática por
+    especialidad: un tipo de servicio siempre lo atiende el mismo técnico.
+
+    Devuelve `None` si el servicio no existe o todavía no tiene técnico
+    asignado. Quien llama debe tratar eso como "no se puede calcular
+    disponibilidad ni agendar" — nunca como "cualquier técnico sirve", porque
+    eso volvería a mezclar la disponibilidad de técnicos distintos.
+    """
+    servicio = leer_servicio(servicio_id)
+    return servicio.get("tecnico_id") if servicio else None
 
 
 def consultar_servicio_agendado(session_id: str) -> str:

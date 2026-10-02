@@ -37,21 +37,32 @@ del `.env`) y se la agrega al prompt en CADA turno — no puede vivir en
 proceso puede quedar corriendo por mucho tiempo.
 
 Sobre la salida de Google Calendar: las tools siguen llamándose IGUAL
-({Consultar_eventos}, {Crear_evento}, etc.) y `TOOLS_SCHEMA` no cambió en lo
-absoluto — por dentro (`tools/citas_tools.py`) ya no hablan con Calendar,
+({Consultar_eventos}, {Crear_evento}, etc.) y la mayoría de `TOOLS_SCHEMA`
+no cambió — por dentro (`tools/citas_tools.py`) ya no hablan con Calendar,
 sino solo con Supabase (ver el docstring de ese módulo para el detalle
 completo y el porqué). El prompt original todavía describe alguna de estas
 tools como "(Google Calendar)" en `<HERRAMIENTAS_DISPONIBLES>" — es texto
 desactualizado que se deja tal cual por ser transcripción fiel del negocio;
 no afecta el comportamiento porque el modelo nunca ve el código, solo el
 resultado de cada tool.
+
+Sobre NOTA_ASIGNACION_TECNICOS: a diferencia de las notas anteriores, esta
+SÍ cambia `TOOLS_SCHEMA` — {Consultar_eventos} gana un parámetro nuevo
+obligatorio, `servicio_id` (ver `supabase/migrations/20260928000003_tecnicos.sql` y el docstring de
+`tools/citas_tools.py`: la disponibilidad ahora se calcula por técnico, y
+sin saber el servicio no se sabe de qué técnico consultar). Es el primer
+caso en este proyecto donde una nota de optimización toca la FORMA de una
+tool, no solo el criterio de cuándo usarla — se documenta aparte y bien
+explícito por eso mismo.
 """
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 from functools import partial
-from typing import Optional
+from typing import Callable, Optional
 
+from contexto_conversacion import aplicar_ventana, construir_ficha, nota_ficha
 from llm_loop import run_agent_loop
 from tools.citas_tools import (
     consultar_eventos,
@@ -62,6 +73,7 @@ from tools.citas_tools import (
     zona_horaria_configurada,
 )
 from tools.catalog_tools import servicio_tecnico, consultar_servicio_agendado
+from tools.validacion_tools import con_validacion
 
 ORIGINAL_SYSTEM_PROMPT = """<ROL>
 Eres el Agente de Servicio Técnico, un agente especializado. Tu única función es gestionar el proceso de agendamiento de citas de servicio técnico:
@@ -605,7 +617,104 @@ obligatoria antes de {Crear_evento}, {Actualizar_evento} o {Eliminar_evento}):
    directo con ese campo.
 """
 
-SYSTEM_PROMPT = ORIGINAL_SYSTEM_PROMPT + NOTA_OPTIMIZACION_AGENDAMIENTO
+NOTA_ASIGNACION_TECNICOS = """
+
+---
+NOTA DE ASIGNACIÓN AUTOMÁTICA DE TÉCNICOS (adición explícita, no estaba en
+el prompt original — ver README.md para el detalle completo):
+
+Cada tipo de servicio técnico tiene un técnico responsable asignado
+internamente. La disponibilidad ya NO es la misma para toda la empresa:
+se calcula POR TÉCNICO — dos técnicos distintos SÍ pueden tener citas
+confirmadas a la misma hora, porque son personas distintas atendiendo en
+paralelo.
+
+Por eso {Consultar_eventos} ahora requiere TAMBIÉN servicio_id (además de
+fecha_inicio y fecha_fin) — sin ese dato no se puede saber de qué técnico
+consultar la agenda. Esto no cambia el orden del flujo: ya identificas el
+servicio_id en FASE 1, antes de llegar a la Consulta de Disponibilidad de
+FASE 2, así que simplemente pasas ese mismo valor que ya tenías guardado.
+Nunca llames {Consultar_eventos} sin servicio_id.
+
+La asignación del técnico a la cita es 100% automática e interna
+(se resuelve sola dentro de {Crear_evento}/{Actualizar_evento}): nunca le
+menciones al cliente el nombre, la existencia, ni la disponibilidad de un
+técnico en particular — para el cliente, la disponibilidad que le muestras
+es simplemente "la disponibilidad de la empresa para ese servicio", igual
+que antes.
+
+Si {Consultar_eventos}, {Crear_evento} o {Actualizar_evento} devuelven un
+error indicando que no hay técnico configurado para el servicio, trátalo
+igual que cualquier otro error técnico de la herramienta: informa al
+cliente que no fue posible procesar la solicitud en este momento y
+ofrécele reintentar o contactar directamente a la empresa — nunca
+menciones la palabra "técnico" en tu respuesta al cliente.
+"""
+
+NOTA_CONFIRMACION_OBLIGATORIA = """
+
+---
+NOTA DE CONFIRMACIÓN OBLIGATORIA (adición explícita, refuerza — nunca
+afloja — la Regla 3 de <REGLAS_INFALIBLES_Y_RESTRICCIONES>):
+
+{Crear_evento}, {Actualizar_evento} y {Eliminar_evento} ahora pueden
+devolver "CONFIRMACION_PENDIENTE" en vez de ejecutar la acción. Eso
+significa que el sistema detectó que ibas a escribir SIN que el cliente
+haya confirmado todavía, y bloqueó la escritura — no se agendó, no se
+modificó, ni se canceló nada.
+
+Cuando eso pase: muestra al cliente el resumen que viene en esa misma
+respuesta (Resumen y Confirmación, o el resumen del cambio, o la pregunta
+de "¿seguro que deseas cancelar?", según corresponda), y DETENTE — termina
+tu respuesta ahí y espera el siguiente mensaje del cliente. NUNCA le digas
+al cliente que la acción ya se completó cuando la respuesta diga
+"CONFIRMACION_PENDIENTE". NUNCA vuelvas a llamar la misma herramienta en
+este mismo turno para "reintentar" — eso no cuenta como confirmación del
+cliente y el sistema lo va a seguir bloqueando.
+
+Cuando el cliente SÍ confirme explícitamente en su siguiente mensaje, vuelve
+a llamar exactamente la misma herramienta con exactamente los mismos datos
+que ya le mostraste — ahí sí se ejecuta de verdad.
+"""
+
+NOTA_NATURALIDAD_CONVERSACION = """
+
+---
+NOTA DE NATURALIDAD DE LA CONVERSACIÓN (adición explícita, no estaba en el
+prompt original — ver docs/PLAN_DE_MEJORAS.md. Solo cambia CÓMO redactas;
+no afloja ninguna regla de <REGLAS_INFALIBLES_Y_RESTRICCIONES>, en especial
+la confirmación explícita obligatoria):
+
+1. El orquestador ya saludó al cliente antes de pasarte la conversación.
+   NUNCA uses la bienvenida ("¡Hola! 👋 Bienvenido a Tecnielectronics. Soy tu
+   asistente virtual de servicio técnico") ni te presentes. De la plantilla
+   "Para Saludo y Catálogo" de <FORMATO_DE_SALIDA_WHATSAPP> usa solo el
+   contenido, sin su primera línea: empieza directamente por el servicio que
+   corresponde o por lo que el cliente preguntó.
+
+2. NUNCA repitas textualmente, ni casi textualmente, un mensaje que ya
+   enviaste en esta conversación. Antes de responder, revisa tu último
+   mensaje: si el cliente contestó con una pregunta u otra cosa en vez de los
+   datos que le pediste, responde PRIMERO a lo que preguntó ahora y luego
+   pide, con una frase breve y distinta, solo los datos que todavía falten.
+
+3. Si el cliente pregunta cómo funciona el proceso (ej. "¿cómo agendo una
+   cita?"), explícalo en 2 o 3 pasos cortos (datos de contacto → elegir día
+   y hora → confirmar el resumen) y pide el siguiente dato que falte.
+
+4. Si el cliente describe su problema de forma exagerada o en broma,
+   mantén el tono profesional: no repitas sus frases textuales; quédate solo
+   con la parte técnica que sí aplica (ej. "el mouse emite pitidos al hacer
+   clic").
+"""
+
+SYSTEM_PROMPT = (
+    ORIGINAL_SYSTEM_PROMPT
+    + NOTA_OPTIMIZACION_AGENDAMIENTO
+    + NOTA_ASIGNACION_TECNICOS
+    + NOTA_CONFIRMACION_OBLIGATORIA
+    + NOTA_NATURALIDAD_CONVERSACION
+)
 
 
 TOOLS_SCHEMA = [
@@ -625,8 +734,9 @@ TOOLS_SCHEMA = [
         "function": {
             "name": "Consultar_eventos",
             "description": (
-                "Devuelve los eventos ya ocupados del calendario general de la empresa "
-                "dentro de un rango de fechas."
+                "Devuelve los eventos ya ocupados dentro de un rango de fechas, PARA EL TÉCNICO "
+                "que atiende servicio_id (la disponibilidad se calcula por técnico, no para toda "
+                "la empresa)."
             ),
             "parameters": {
                 "type": "object",
@@ -639,8 +749,15 @@ TOOLS_SCHEMA = [
                         "type": "string",
                         "description": "ISO 8601 con offset de Colombia. Fin del rango a consultar.",
                     },
+                    "servicio_id": {
+                        "type": "string",
+                        "description": (
+                            "Devuelto por Servicio_tecnico. Obligatorio: determina de qué técnico "
+                            "se consulta la agenda."
+                        ),
+                    },
                 },
-                "required": ["fecha_inicio", "fecha_fin"],
+                "required": ["fecha_inicio", "fecha_fin", "servicio_id"],
             },
         },
     },
@@ -728,18 +845,44 @@ TOOLS_SCHEMA = [
 ]
 
 
-def _tool_functions_para_sesion(session_id: str) -> dict:
-    """Arma el dict {nombre_tool: función} para ESTA sesión puntual. Solo
-    Consultar_servicio_agendado necesita el session_id inyectado (el resto
-    de tools no dependen de qué cliente está hablando)."""
-    return {
+# Datos del cliente que se rescatan para la ficha de contexto cuando la
+# conversación es larga (Fase 6): los argumentos de estas tools son datos que
+# el cliente dio y, en el caso de Crear/Actualizar, que ya confirmó. El
+# Event ID NO se incluye a propósito: el prompt prohíbe reutilizarlo de un
+# turno anterior sin volver a consultar {Consultar_servicio_agendado}.
+CAMPOS_FICHA = {
+    "Consultar_eventos": ("servicio_id",),
+    "Crear_evento": ("cliente_nombre", "cliente_telefono", "servicio_id", "descripcion"),
+    "Actualizar_evento": ("cliente_nombre", "cliente_telefono", "servicio_id", "descripcion"),
+}
+
+
+def _tool_functions_para_sesion(session_id: str, id_turno: str) -> dict:
+    """Arma el dict {nombre_tool: función} para ESTA sesión y este turno
+    puntuales. `session_id` se inyecta en todas las tools que necesitan saber
+    de qué cliente se trata; `id_turno` (el `run_id` de ESTE turno, uno por
+    mensaje del cliente) se inyecta además en las 3 tools de escritura —
+    lo usa `_requiere_confirmacion` en `tools/citas_tools.py` para detectar
+    si el modelo está reintentando la tool dentro del mismo turno (sin que
+    el cliente haya escrito nada nuevo) en vez de esperar una confirmación
+    real. El modelo nunca ve ni pasa ninguno de los dos parámetros.
+
+    Cada función va envuelta en `con_validacion` (Fase 4 de
+    `docs/PLAN_DE_MEJORAS.md`): los argumentos del modelo se validan con
+    Pydantic antes de ejecutar, y un error vuelve al modelo como texto."""
+    funciones: dict[str, Callable] = {
         "Servicio_tecnico": servicio_tecnico,
         "Consultar_eventos": consultar_eventos,
-        "Crear_evento": crear_evento,
-        "Actualizar_evento": actualizar_evento,
-        "Eliminar_evento": eliminar_evento,
+        "Crear_evento": partial(crear_evento, session_id=session_id, id_turno=id_turno),
+        "Actualizar_evento": partial(
+            actualizar_evento, session_id=session_id, id_turno=id_turno
+        ),
+        "Eliminar_evento": partial(
+            eliminar_evento, session_id=session_id, id_turno=id_turno
+        ),
         "Consultar_servicio_agendado": partial(consultar_servicio_agendado, session_id=session_id),
     }
+    return {nombre: con_validacion(nombre, funcion) for nombre, funcion in funciones.items()}
 
 
 def _nota_fecha_actual() -> str:
@@ -763,17 +906,42 @@ def _nota_fecha_actual() -> str:
     )
 
 
-def run(mensaje_cliente: str, session_id: str, historial: Optional[list] = None):
+def run(
+    mensaje_cliente: str,
+    session_id: str,
+    historial: Optional[list] = None,
+    run_id: Optional[str] = None,
+    presupuesto=None,
+):
     """Punto de entrada del subagente. `historial` es la conversación PROPIA
     de este subagente para esa sesión (no la del orquestador) — quien llama
     debe persistirla entre turnos para que el agente recuerde nombre,
-    teléfono, servicio_id, etc. ya recopilados en mensajes anteriores."""
-    historial = historial or []
-    historial = historial + [{"role": "user", "content": mensaje_cliente}]
-    texto, historial_actualizado = run_agent_loop(
-        system_prompt=SYSTEM_PROMPT + _nota_fecha_actual(),
-        messages=historial,
+    teléfono, servicio_id, etc. ya recopilados en mensajes anteriores.
+
+    `run_id` (opcional, propagado desde `agents/orquestador.py`) agrupa los
+    eventos de este subagente bajo la misma "corrida" que el Orquestador que
+    lo invocó — ver `tools/eventos_agente.py`.
+
+    `presupuesto` (opcional, un `llm_loop.PresupuestoTurno`) es el MISMO
+    objeto que usa el orquestador en este turno: las llamadas al LLM de este
+    sub-agente descuentan del tope compartido del turno.
+
+    Contexto (Fase 6 de `docs/PLAN_DE_MEJORAS.md`): al modelo solo se le
+    envían los últimos turnos (`aplicar_ventana`). Si quedaron mensajes
+    fuera, se le agrega una ficha con los datos del cliente extraídos de las
+    tools ya ejecutadas (`CAMPOS_FICHA`). El historial devuelto es el
+    COMPLETO (lo descartado + la ventana actualizada)."""
+    historial = (historial or []) + [{"role": "user", "content": mensaje_cliente}]
+    descartados, ventana = aplicar_ventana(historial)
+    texto, ventana_actualizada = run_agent_loop(
+        system_prompt=SYSTEM_PROMPT + _nota_fecha_actual() + nota_ficha(construir_ficha(descartados, CAMPOS_FICHA)),
+        messages=ventana,
         tools_schema=TOOLS_SCHEMA,
-        tool_functions=_tool_functions_para_sesion(session_id),
+        # Sin run_id (llamada directa, fuera del orquestador) cada llamada
+        # cuenta como un turno propio.
+        tool_functions=_tool_functions_para_sesion(session_id, run_id or uuid.uuid4().hex),
+        contexto={
+            "agente": "Servicio_Tecnico", "session_id": session_id, "run_id": run_id, "presupuesto": presupuesto,
+        },
     )
-    return texto, historial_actualizado
+    return texto, descartados + ventana_actualizada
