@@ -361,6 +361,9 @@ TOOLS_SCHEMA = construir_tools_schema()
 SYSTEM_PROMPT = construir_system_prompt()
 
 
+RESPUESTA_VACIA = "Disculpa, no alcancé a procesar tu mensaje. ¿Me lo repites, por favor? 🙏"
+
+
 def respuesta_para_cliente(texto_orquestador: str, texto_subagente: str) -> str:
     """Garantía de código de la Regla 2 del prompt ("reenvía la respuesta
     del subagente tal cual"). Bug real (2026-10-02): tras recibir la
@@ -458,8 +461,14 @@ def run(
         contexto={"agente": "Orquestador", "session_id": session_id, "run_id": run_id, "presupuesto": presupuesto},
         reenviar_ultima_tool_si_se_agota=True,
     )
-    if respuesta_subagente:
-        respuesta = respuesta_para_cliente(respuesta, respuesta_subagente[0])
+    corregida = respuesta_para_cliente(respuesta, respuesta_subagente[0]) if respuesta_subagente else respuesta
+    if not (corregida or "").strip():
+        # Un modelo puede terminar con contenido vacío: el cliente nunca debe
+        # recibir una burbuja en blanco.
+        logger.warning("El orquestador terminó sin texto para la sesión %s; se envía el respaldo", session_id)
+        corregida = RESPUESTA_VACIA
+    if corregida != respuesta:
+        respuesta = corregida
         # El historial guardado debe decir lo que el cliente realmente vio.
         if ventana_actualizada and ventana_actualizada[-1].get("role") == "assistant":
             ventana_actualizada[-1] = {**ventana_actualizada[-1], "content": respuesta}

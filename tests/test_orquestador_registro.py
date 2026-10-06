@@ -186,4 +186,18 @@ assert historiales["orquestador"][-1] == {"role": "assistant", "content": SUB}, 
 )
 print("✅ Si el orquestador no reenvía la respuesta del sub-agente (o la cambia), el sistema la envía igual.")
 
+# Respuesta final vacía y sin delegación: nunca una burbuja en blanco.
+respuestas = iter([_respuesta("")])
+llm_loop.reiniciar_disyuntor()
+with (
+    patch.object(orquestador, "SUBAGENTES", registro),
+    patch.object(orquestador, "TOOLS_SCHEMA", schema),
+    patch("llm_loop.OpenAI") as mock_openai,
+):
+    mock_openai.return_value.chat.completions.create.side_effect = lambda **kw: next(respuestas)
+    texto, historiales = orquestador.run("hola", session_id="3001", historiales={})
+assert texto == orquestador.RESPUESTA_VACIA, texto
+assert historiales["orquestador"][-1]["content"] == orquestador.RESPUESTA_VACIA
+print("✅ Si el modelo termina sin texto, el cliente recibe un aviso para repetir el mensaje.")
+
 print("\n✅ Todos los tests del registro de sub-agentes pasaron.")
