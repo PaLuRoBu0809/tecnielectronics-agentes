@@ -82,7 +82,9 @@ assert kwargs["headers"]["X-Idempotency-Key"] == "ref-1", "Reintentar tras un ti
 assert cuerpo["items"][1] == {"id": "p2", "title": "Mouse", "quantity": 2, "unit_price": 50000, "currency_id": "COP"}
 assert cuerpo["external_reference"] == "ref-1" and cuerpo["expires"] is True
 assert cuerpo["expiration_date_to"] == "2026-10-03T16:50:00.000+00:00"
-assert cuerpo["notification_url"] == "https://tecni.ejemplo.com/webhooks/mercadopago"
+assert cuerpo["notification_url"] == "https://tecni.ejemplo.com/webhooks/mercadopago?source_news=webhooks", (
+    "Solo avisos en formato Webhook (firmados), no IPN"
+)
 
 with patch.dict(os.environ, {"URL_PUBLICA_BASE": ""}):
     with patch.object(pagos.requests, "post", return_value=_respuesta({"init_point": "x"})) as post:

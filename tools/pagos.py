@@ -83,7 +83,10 @@ def url_webhook() -> Optional[str]:
     hay URL pública (en local sin túnel). Sin ella el pago igual se registra:
     se concilia cuando el cliente pregunta (`servicio_pagos`)."""
     base = os.environ.get("URL_PUBLICA_BASE", "").strip().rstrip("/")
-    return f"{base}{RUTA_WEBHOOK}" if base.startswith("https://") else None
+    # source_news=webhooks: solo avisos en formato Webhook (firmados con
+    # x-signature). Sin él, MercadoPago manda además el formato viejo IPN
+    # (?topic=payment&id=...), que no trae firma y el webhook rechaza.
+    return f"{base}{RUTA_WEBHOOK}?source_news=webhooks" if base.startswith("https://") else None
 
 
 def _precio(valor: Decimal):

@@ -338,7 +338,16 @@ async def webhook_mercadopago(request: Request):
         request.headers.get("x-signature"), request.headers.get("x-request-id"),
         None if payment_id is None else str(payment_id), secreto,
     ):
-        logger.warning("Webhook de MercadoPago con firma inválida (payment %s)", payment_id)
+        # Diagnóstico sin datos sensibles: qué faltó o en qué formato llegó.
+        logger.warning(
+            "Webhook de MercadoPago con firma inválida (payment %s): x-signature=%s, x-request-id=%s, "
+            "formato=%s, parámetros=%s",
+            payment_id,
+            "presente" if request.headers.get("x-signature") else "AUSENTE",
+            "presente" if request.headers.get("x-request-id") else "AUSENTE",
+            "IPN (topic/id)" if params.get("topic") else "Webhook (type/data.id)",
+            sorted(params.keys()),
+        )
         raise HTTPException(status_code=401, detail="firma inválida")
 
     if tipo != "payment" or not payment_id:

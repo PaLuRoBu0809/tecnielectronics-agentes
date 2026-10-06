@@ -100,11 +100,14 @@ function renderMensajes() {
   el.mensajes.scrollTop = el.mensajes.scrollHeight;
 }
 
-function agregarMensaje(quien, texto) {
-  if (!transcripts[sesionActual]) transcripts[sesionActual] = [];
-  transcripts[sesionActual].push({ quien, texto });
+/** Agrega un mensaje a la conversación de `sesion` (por defecto la abierta).
+ * Solo repinta si esa conversación es la que se está viendo: una respuesta
+ * que llega tarde nunca se pega en otra conversación. */
+function agregarMensaje(quien, texto, sesion = sesionActual) {
+  if (!transcripts[sesion]) transcripts[sesion] = [];
+  transcripts[sesion].push({ quien, texto });
   guardarTranscripts(transcripts);
-  renderMensajes();
+  if (sesion === sesionActual) renderMensajes();
 }
 
 function renderSesionesConocidas() {
@@ -129,7 +132,11 @@ function cambiarSesion(sessionId) {
 }
 
 async function enviarMensaje(mensaje) {
-  agregarMensaje("cliente", mensaje);
+  // La respuesta pertenece a la sesión que preguntó, aunque mientras se
+  // espera se cambie a otra conversación (bug real: la respuesta se pegaba
+  // en la conversación abierta en ese momento y el cliente no la veía).
+  const sesion = sesionActual;
+  agregarMensaje("cliente", mensaje, sesion);
 
   const indicador = crearBurbuja("bot", "TecniElectronics está escribiendo…");
   indicador.classList.add("escribiendo");
@@ -141,7 +148,7 @@ async function enviarMensaje(mensaje) {
     const resp = await apiFetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: sesionActual, mensaje }),
+      body: JSON.stringify({ session_id: sesion, mensaje }),
     });
     if (resp.status === 429) {
       const datos = await resp.json().catch(() => ({}));
@@ -152,10 +159,10 @@ async function enviarMensaje(mensaje) {
     }
     const datos = await resp.json();
     indicador.remove();
-    agregarMensaje("bot", datos.respuesta);
+    agregarMensaje("bot", datos.respuesta, sesion);
   } catch (err) {
     indicador.remove();
-    agregarMensaje("bot", `⚠️ No se pudo obtener respuesta: ${err.message}`);
+    agregarMensaje("bot", `⚠️ No se pudo obtener respuesta: ${err.message}`, sesion);
   } finally {
     el.input.disabled = false;
     el.input.focus();
