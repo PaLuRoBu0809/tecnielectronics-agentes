@@ -44,7 +44,7 @@ problemas_rotos = verificar_coherencia_tools(schema_roto, funciones, ARGUMENTOS_
 assert any("Crear_evento: required" in p for p in problemas_rotos), problemas_rotos
 
 orq_funciones = {t["function"]["name"] for t in orquestador.TOOLS_SCHEMA}
-assert orq_funciones == {"Agente_Servicio_Tecnico", "Agente_Ventas"}, (
+assert orq_funciones == {"Agente_Servicio_Tecnico", "Agente_Ventas", "Info_empresa"}, (
     "El orquestador solo debe exponer las tools que existen"
 )
 print("✅ TOOLS_SCHEMA, modelos Pydantic y funciones Python están sincronizados (nombres, campos y obligatorios).")

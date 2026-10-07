@@ -168,6 +168,26 @@ def _stock(conn, producto):
     return conn.execute(f"select stock from products where id = '{producto}'").fetchone()[0]
 
 
+def _probar_info_empresa(conn, migraciones) -> None:
+    """Migración 011: tabla de información de la empresa."""
+    filas = dict(conn.execute("select tema, uso from info_empresa").fetchall())
+    assert filas["contacto"] == "siempre" and filas["quienes_somos"] == "bajo_demanda", filas
+    assert len(filas) == 9, filas
+    _debe_fallar(conn, "insert into info_empresa (tema, titulo, contenido, uso) values ('x', 'X', 'algo', 'a veces')",
+                 errors.CheckViolation, "uso solo acepta 'siempre' o 'bajo_demanda'")
+    _debe_fallar(conn, "insert into info_empresa (tema, titulo, contenido) values ('Mi Tema', 'X', 'algo')",
+                 errors.CheckViolation, "el tema va en minúsculas y sin espacios")
+    _debe_fallar(conn, "insert into info_empresa (tema, titulo, contenido) values ('vacio', 'X', '   ')",
+                 errors.CheckViolation, "el contenido no puede estar vacío")
+
+    # La empresa edita un dato desde el Table Editor; re-aplicar la migración no lo pisa.
+    conn.execute("update info_empresa set contenido = 'Línea: 300 000 0000' where tema = 'contacto'")
+    conn.execute(next(m for m in migraciones if "info_empresa" in m.name).read_text(encoding="utf-8"))
+    contenido = conn.execute("select contenido from info_empresa where tema = 'contacto'").fetchone()[0]
+    assert contenido == "Línea: 300 000 0000", "Re-aplicar la 011 no debe pisar lo que editó la empresa"
+    print("✅ 011: info_empresa sembrada (9 temas), valida uso/tema/contenido y no pisa ediciones al re-aplicar.")
+
+
 def _probar_ventas(conn) -> None:
     # --- Normalización de los datos de n8n ---
     filas = dict(
@@ -419,6 +439,7 @@ def probar(url: str) -> None:
         print("✅ Tras la 004, toda cita confirmada exige técnico (las canceladas no).")
 
         _probar_ventas(conn)
+        _probar_info_empresa(conn, MIGRACIONES)
 
 
 if __name__ == "__main__":
