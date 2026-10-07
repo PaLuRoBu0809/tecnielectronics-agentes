@@ -265,10 +265,13 @@ una búsqueda típica en Ventas hacía 5 llamadas (~22 s). Cambios:
   redes, medios de pago) o 'bajo_demanda' (la tool `Info_empresa` lo entrega
   solo si preguntan: quiénes somos, pagos de la tienda web con GOU, privacidad).
   La empresa la edita desde el Table Editor; se nota en máximo 10 minutos.
-- `NOTA_CONOCIMIENTO_EMPRESA` en el orquestador: responde él mismo las
-  preguntas sobre la empresa, solo con esos datos (no inventa: lo que falta
-  se responde con la línea de contacto), recomienda Instagram sin insistir y
-  da la línea de atención cuando piden un humano o hay reclamos.
+- `NOTA_CONOCIMIENTO_EMPRESA` en el orquestador: la información de la
+  empresa es CONTEXTO, no un servicio (pedido del negocio: "no es guía
+  turístico"). Responde dudas puntuales en 1-2 frases y redirige a ventas o
+  servicio técnico; la historia, en una frase y solo si la piden; usa el
+  contexto para dar confianza al vender; Instagram solo si ayuda a la
+  compra; da la línea de atención cuando piden un humano o hay reclamos. Solo
+  con los datos de la tabla: lo que falta se responde con la línea.
 - Decisiones del negocio: nombre oficial TECNIELECTRONIS & CIA SAS; atención
   humana = línea 301 208 6262 y correos; por el chat se paga con MercadoPago o
   contra entrega (GOU Pagos es solo de la tienda web).
