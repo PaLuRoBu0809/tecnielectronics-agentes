@@ -251,27 +251,20 @@ es que el cliente conozca y aproveche TODO lo que ofrece la empresa.
    presentando compra de equipos Y servicio técnico; no las mandes a
    servicio técnico.
 
-3. VENTA CRUZADA (máximo una vez por conversación, nunca insistente): cuando
-   el subagente acaba de CERRAR un proceso con éxito (pedido registrado o
-   cita agendada), agrega al final de su respuesta UNA línea breve ofreciendo
-   la otra línea de negocio, relacionada con lo que el cliente hizo. Ej.:
-   - Tras una compra: "Por cierto, si necesitas instalación, configuración o
-     mantenimiento para tu equipo, también te agendamos servicio técnico. 🛠️"
-   - Tras agendar una cita: "Y si necesitas repuestos, accesorios o un equipo
-     nuevo, también te ayudo con la compra. 🛒"
-   Junto con la línea del tema pendiente (Regla 5), es la única excepción a
-   la prohibición de modificar la respuesta del subagente. No la agregues si
-   el subagente está pidiendo datos o confirmación, ni si el cliente ya
-   rechazó la otra línea.
+3. LA RESPUESTA DEL SUBAGENTE LLEGA DIRECTO AL CLIENTE: en cuanto invocas a
+   un subagente, el sistema le entrega su respuesta al cliente tal cual (la
+   Fase 2, "reenvía la respuesta", ya la hace el sistema por ti). Por eso:
+   - Tu única decisión es A QUIÉN delegar; no redactes nada después.
+   - Si el cliente menciona dos temas en un mismo mensaje, delega el
+     principal; el otro se retoma en su siguiente mensaje (la línea del tema
+     pendiente de la Regla 5 ya no aplica).
+   - La venta cruzada (ofrecer la otra línea de negocio cuando se registra
+     un pedido o se agenda una cita) la agrega el sistema automáticamente.
 
 4. UNA DELEGACIÓN POR MENSAJE: invoca un subagente UNA sola vez por mensaje
    del cliente y pásale lo que el cliente escribió. Nunca inventes preguntas
-   ni respuestas en nombre del cliente. Si el subagente pide datos o
-   confirmación, es el CLIENTE quien contesta en su siguiente mensaje: tu
-   respuesta final es el texto COMPLETO del subagente, nunca una nota tuya
-   sobre lo que estás haciendo (ej. "[Esperando al cliente]"). El sistema
-   bloquea una segunda invocación en el mismo turno y, si no reenvías la
-   respuesta del subagente, la envía él.
+   ni respuestas en nombre del cliente. El sistema bloquea una segunda
+   invocación en el mismo turno.
 """
 
 # ---------------------------------------------------------------------------
@@ -292,6 +285,13 @@ class SubAgente:
     clave_historial: str  # clave en conversaciones.historiales (ej. "ventas")
     descripcion: str  # descripción de la tool para el modelo
     ejecutar: Callable  # run(mensaje_cliente, session_id, historial, run_id, presupuesto) -> (texto, historial)
+    # Venta cruzada (la agrega el código, no el modelo): si en el turno la
+    # tool `tool_de_cierre` del sub-agente devolvió un resultado que empieza
+    # con `prefijo_de_exito` (pedido registrado, cita agendada), se agrega
+    # `venta_cruzada` al final de la respuesta, una vez por conversación.
+    tool_de_cierre: str = ""
+    prefijo_de_exito: str = ""
+    venta_cruzada: str = ""
 
 
 SUBAGENTES = (
@@ -307,6 +307,10 @@ SUBAGENTES = (
         # Referencia perezosa: se resuelve en cada llamada, así los tests
         # pueden reemplazar `servicio_tecnico_agent.run`.
         ejecutar=lambda **kwargs: servicio_tecnico_agent.run(**kwargs),
+        # Crear_evento solo empieza con "Inicio:" cuando la cita quedó agendada.
+        tool_de_cierre="Crear_evento",
+        prefijo_de_exito="Inicio:",
+        venta_cruzada="Y si necesitas repuestos, accesorios o un equipo nuevo, también te ayudo con la compra. 🛒",
     ),
     SubAgente(
         tool="Agente_Ventas",
@@ -318,6 +322,12 @@ SUBAGENTES = (
             "texto plano, lista para reenviar tal cual."
         ),
         ejecutar=lambda **kwargs: ventas_agent.run(**kwargs),
+        tool_de_cierre="Crear_orden",
+        prefijo_de_exito="OK: PEDIDO REGISTRADO",
+        venta_cruzada=(
+            "Por cierto, si necesitas instalación, configuración o mantenimiento para tu equipo, "
+            "también te agendamos servicio técnico. 🛠️"
+        ),
     ),
 )
 
@@ -364,20 +374,32 @@ SYSTEM_PROMPT = construir_system_prompt()
 RESPUESTA_VACIA = "Disculpa, no alcancé a procesar tu mensaje. ¿Me lo repites, por favor? 🙏"
 
 
-def respuesta_para_cliente(texto_orquestador: str, texto_subagente: str) -> str:
-    """Garantía de código de la Regla 2 del prompt ("reenvía la respuesta
-    del subagente tal cual"). Bug real (2026-10-02): tras recibir la
-    respuesta de Ventas, el modelo del orquestador respondió una nota
-    inventada "[Esperando la siguiente entrada del cliente...]" y el cliente
-    nunca vio la respuesta.
+def cerro_proceso(sub: SubAgente, mensajes_del_turno: list) -> bool:
+    """True si, en los mensajes que el sub-agente agregó a su historial en
+    este turno, su tool de cierre (Crear_orden / Crear_evento) devolvió un
+    resultado exitoso (empieza con `prefijo_de_exito`)."""
+    if not sub.tool_de_cierre:
+        return False
+    ids_de_cierre = {
+        tc.get("id")
+        for m in mensajes_del_turno
+        for tc in m.get("tool_calls") or []
+        if (tc.get("function") or {}).get("name") == sub.tool_de_cierre
+    }
+    return any(
+        m.get("role") == "tool" and m.get("tool_call_id") in ids_de_cierre
+        and str(m.get("content", "")).startswith(sub.prefijo_de_exito)
+        for m in mensajes_del_turno
+    )
 
-    Si el texto final del orquestador contiene la respuesta del subagente,
-    se respeta tal cual: puede llevar agregada la línea de venta cruzada o la
-    del tema pendiente, que el prompt permite. Si no la contiene (la resumió,
-    la cambió o la reemplazó), se envía la del subagente."""
-    if texto_subagente.strip() and texto_subagente.strip() not in (texto_orquestador or ""):
-        return texto_subagente
-    return texto_orquestador
+
+def con_venta_cruzada(respuesta: str, linea: str, historial_orquestador: list) -> str:
+    """Agrega `linea` al final de la respuesta, solo si nunca se le ofreció
+    antes en esta conversación (máximo una vez, nunca insistente)."""
+    ya_ofrecida = any(
+        m.get("role") == "assistant" and linea in (m.get("content") or "") for m in historial_orquestador
+    )
+    return respuesta if ya_ofrecida else f"{respuesta}\n\n{linea}"
 
 
 def run(
@@ -419,7 +441,7 @@ def run(
     # dos veces. Además, repetir una delegación puede repetir escrituras
     # (añadir al carrito dos veces).
     delegaciones: list = []
-    respuesta_subagente: list = []  # el texto que devolvió el sub-agente en este turno
+    procesos_cerrados: list = []  # sub-agentes que registraron un pedido o una cita en este turno
 
     def _tool_para(sub: SubAgente) -> Callable:
         # El nombre del parámetro (`mensaje_cliente`) debe coincidir con el
@@ -433,15 +455,17 @@ def run(
                     "cliente tal cual y espera su siguiente mensaje."
                 )
             delegaciones.append(sub.tool)
+            historial_previo = historiales.get(sub.clave_historial, [])
             texto, nuevo_historial = sub.ejecutar(
                 mensaje_cliente=mensaje_cliente,
                 session_id=session_id,
-                historial=historiales.get(sub.clave_historial, []),
+                historial=historial_previo,
                 run_id=run_id,
                 presupuesto=presupuesto,
             )
             historiales[sub.clave_historial] = nuevo_historial
-            respuesta_subagente.append(texto)
+            if cerro_proceso(sub, nuevo_historial[len(historial_previo):]):
+                procesos_cerrados.append(sub)
             return texto
 
         return tool
@@ -460,8 +484,13 @@ def run(
         tool_functions=tool_functions,
         contexto={"agente": "Orquestador", "session_id": session_id, "run_id": run_id, "presupuesto": presupuesto},
         reenviar_ultima_tool_si_se_agota=True,
+        # La respuesta del sub-agente va directo al cliente: sin una segunda
+        # llamada al modelo solo para copiarla (ahorra ~3,5 s por turno).
+        tools_terminales=frozenset(sub.tool for sub in SUBAGENTES),
     )
-    corregida = respuesta_para_cliente(respuesta, respuesta_subagente[0]) if respuesta_subagente else respuesta
+    corregida = respuesta
+    for sub in procesos_cerrados:
+        corregida = con_venta_cruzada(corregida, sub.venta_cruzada, historial_orq)
     if not (corregida or "").strip():
         # Un modelo puede terminar con contenido vacío: el cliente nunca debe
         # recibir una burbuja en blanco.

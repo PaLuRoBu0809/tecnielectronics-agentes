@@ -60,6 +60,17 @@ assert ventas_real.clave_historial == "ventas"
 with patch("agents.ventas_agent.run", return_value=("ok", [])) as run_ventas:
     ventas_real.ejecutar(mensaje_cliente="hola", session_id="1", historial=[], run_id="r", presupuesto=None)
 assert run_ventas.call_count == 1, "La referencia es perezosa: los tests pueden reemplazar ventas_agent.run"
+from agents import servicio_tecnico_agent, ventas_agent  # noqa: E402
+
+tools_por_subagente = {
+    "Agente_Servicio_Tecnico": {t["function"]["name"] for t in servicio_tecnico_agent.TOOLS_SCHEMA},
+    "Agente_Ventas": {t["function"]["name"] for t in ventas_agent.TOOLS_SCHEMA},
+}
+for sub in orquestador.SUBAGENTES:
+    assert sub.tool_de_cierre in tools_por_subagente[sub.tool], (
+        f"{sub.tool}: la tool de cierre '{sub.tool_de_cierre}' debe existir en el sub-agente (venta cruzada)"
+    )
+    assert sub.prefijo_de_exito and sub.venta_cruzada
 print("✅ Registro real: Servicio Técnico y Ventas como tools; prompt original + nota de asesor comercial.")
 
 # ---------------------------------------------------------------------------
@@ -110,8 +121,15 @@ with (
 ):
     mock_openai.return_value.chat.completions.create.side_effect = lambda **kw: next(respuestas)
     texto, historiales = orquestador.run("quiero un teclado", session_id="3001", historiales=historiales_previos)
+    llamadas_al_modelo = mock_openai.return_value.chat.completions.create.call_count
 
 assert texto == "Tenemos el teclado X a $100."
+assert llamadas_al_modelo == 1, (
+    "La respuesta del sub-agente va directo al cliente: sin una 2ª llamada al modelo solo para copiarla"
+)
+assert historiales["orquestador"][-1] == {"role": "assistant", "content": "Tenemos el teclado X a $100."}, (
+    "El orquestador guarda en SU historial lo que respondió el sub-agente (para saber qué tema sigue)"
+)
 assert len(llamadas_ventas) == 1 and llamadas_ventas[0]["historial_previo"] == historiales_previos["ventas"], (
     "Ventas debe recibir SU historial previo, no el de otro agente"
 )
@@ -126,8 +144,9 @@ print("✅ Turno completo: el orquestador delega a Ventas, que recibe su histori
 
 # ---------------------------------------------------------------------------
 # 4) Una sola delegación por mensaje (bug real de la prueba del 2026-10-01:
-#    el modelo invocó a Ventas dos veces en el mismo turno, la segunda con un
-#    "¿Confirmas que todo es correcto?" inventado como si fuera del cliente).
+#    el modelo invocó a Ventas dos veces en el mismo turno). Con la respuesta
+#    directa el turno termina tras la primera delegación; si el modelo pide
+#    dos en la MISMA respuesta, la segunda se bloquea sin ejecutarse.
 # ---------------------------------------------------------------------------
 llamadas_ventas.clear()
 segunda = SimpleNamespace(
@@ -136,11 +155,7 @@ segunda = SimpleNamespace(
     model_dump=lambda: {"id": "v2", "type": "function",
                         "function": {"name": "Agente_Ventas", "arguments": "{}"}},
 )
-respuestas = iter([
-    _respuesta(tool_calls=[llamada_ventas]),
-    _respuesta(tool_calls=[segunda]),  # el modelo intenta delegar otra vez
-    _respuesta("Tenemos el teclado X a $100."),
-])
+respuestas = iter([_respuesta(tool_calls=[llamada_ventas, segunda])])
 llm_loop.reiniciar_disyuntor()
 with (
     patch.object(orquestador, "SUBAGENTES", registro),
@@ -153,38 +168,57 @@ with (
 assert len(llamadas_ventas) == 1, "La segunda delegación del mismo turno NO debe ejecutar al sub-agente"
 bloqueo = next(m for m in historiales["orquestador"] if m.get("tool_call_id") == "v2")
 assert bloqueo["content"].startswith("(interno) BLOQUEADO") and "Agente_Ventas" in bloqueo["content"]
-assert texto == "Tenemos el teclado X a $100."
+assert texto == "Tenemos el teclado X a $100.", "Al cliente le llega la respuesta de la primera delegación"
 print("✅ Una delegación por mensaje: un segundo intento en el mismo turno se bloquea sin ejecutar al sub-agente.")
 
 # ---------------------------------------------------------------------------
-# 5) La respuesta del sub-agente siempre le llega al cliente (bug real del
-#    2026-10-02: el orquestador respondió "[Esperando la siguiente entrada
-#    del cliente...]" en vez de reenviar lo que dijo Ventas).
+# 5) Venta cruzada desde el código: al registrar un pedido se ofrece la otra
+#    línea de negocio, una sola vez por conversación.
 # ---------------------------------------------------------------------------
-SUB = "Tenemos el teclado X a $100."
-inventada = "[Esperando la siguiente entrada del cliente para continuar con el agente de ventas]"
-assert orquestador.respuesta_para_cliente(inventada, SUB) == SUB, "Una nota inventada se reemplaza"
-assert orquestador.respuesta_para_cliente("Te ofrecemos teclados.", SUB) == SUB, "Un resumen también"
-con_venta_cruzada = SUB + "\n\nPor cierto, también te agendamos servicio técnico. 🛠️"
-assert orquestador.respuesta_para_cliente(con_venta_cruzada, SUB) == con_venta_cruzada, (
-    "Reenviar la respuesta completa + una línea permitida se respeta"
-)
+LINEA = "Por cierto, también te agendamos servicio técnico. 🛠️"
+resultado_crear_orden = {"valor": "OK: PEDIDO REGISTRADO (pago contra entrega). Pedido #50"}
 
-llamadas_ventas.clear()
-respuestas = iter([_respuesta(tool_calls=[llamada_ventas]), _respuesta(inventada)])
-llm_loop.reiniciar_disyuntor()
-with (
-    patch.object(orquestador, "SUBAGENTES", registro),
-    patch.object(orquestador, "TOOLS_SCHEMA", schema),
-    patch("llm_loop.OpenAI") as mock_openai,
-):
-    mock_openai.return_value.chat.completions.create.side_effect = lambda **kw: next(respuestas)
-    texto, historiales = orquestador.run("quiero un teclado", session_id="3001", historiales={})
-assert texto == SUB, texto
-assert historiales["orquestador"][-1] == {"role": "assistant", "content": SUB}, (
-    "El historial guarda lo que el cliente realmente vio"
+
+def _ventas_que_crea_orden(mensaje_cliente, session_id, historial, run_id, presupuesto):
+    """Ventas simulado que en este turno llamó a Crear_orden."""
+    nuevo = historial + [
+        {"role": "user", "content": mensaje_cliente},
+        {"role": "assistant", "content": None, "tool_calls": [
+            {"id": "c1", "type": "function", "function": {"name": "Crear_orden", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "c1", "content": resultado_crear_orden["valor"]},
+        {"role": "assistant", "content": "¡Tu pedido #50 quedó registrado!"},
+    ]
+    return "¡Tu pedido #50 quedó registrado!", nuevo
+
+
+VENTAS_CIERRE = SubAgente(
+    tool="Agente_Ventas", clave_historial="ventas", descripcion="Ventas.", ejecutar=_ventas_que_crea_orden,
+    tool_de_cierre="Crear_orden", prefijo_de_exito="OK: PEDIDO REGISTRADO", venta_cruzada=LINEA,
 )
-print("✅ Si el orquestador no reenvía la respuesta del sub-agente (o la cambia), el sistema la envía igual.")
+registro_cierre = solo_servicio + (VENTAS_CIERRE,)
+
+
+def _turno(historiales_previos):
+    respuestas_turno = iter([_respuesta(tool_calls=[llamada_ventas])])
+    llm_loop.reiniciar_disyuntor()
+    with (
+        patch.object(orquestador, "SUBAGENTES", registro_cierre),
+        patch.object(orquestador, "TOOLS_SCHEMA", orquestador.construir_tools_schema(registro_cierre)),
+        patch("llm_loop.OpenAI") as mock_openai,
+    ):
+        mock_openai.return_value.chat.completions.create.side_effect = lambda **kw: next(respuestas_turno)
+        return orquestador.run("sí, confirmo", session_id="3001", historiales=historiales_previos)
+
+
+texto, historiales = _turno({})
+assert texto == "¡Tu pedido #50 quedó registrado!" + "\n\n" + LINEA, texto
+assert historiales["orquestador"][-1]["content"] == texto, "El historial guarda lo que el cliente vio"
+texto, _ = _turno(historiales)
+assert texto == "¡Tu pedido #50 quedó registrado!", "La venta cruzada se ofrece una sola vez por conversación"
+resultado_crear_orden["valor"] = "CONFIRMACION_PENDIENTE: Todavía NO se ha creado el pedido."
+texto, _ = _turno({})
+assert LINEA not in texto, "Si el pedido no se registró (pendiente de confirmar), no hay venta cruzada"
+print("✅ Venta cruzada desde el código: tras registrar un pedido, una sola vez por conversación.")
 
 # Respuesta final vacía y sin delegación: nunca una burbuja en blanco.
 respuestas = iter([_respuesta("")])
