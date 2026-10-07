@@ -18,7 +18,7 @@ traía el teléfono resuelto desde el trigger de WhatsApp.
 
 Sobre NOTA_OPTIMIZACION_AGENDAMIENTO: `ORIGINAL_SYSTEM_PROMPT` es la misma
 transcripción fiel de siempre, sin cambiar una coma. Se le agrega, igual que
-hace `agents/orquestador.py` con su `NOTA_TEMPORAL_FASE_DESARROLLO`, una nota
+hace `agents/orquestador.py` con sus notas, una nota
 claramente separada al final para reducir turnos de conversación en el
 agendamiento (pedida explícitamente para hacer el flujo más eficiente desde
 el chat) sin tocar la regla de confirmación explícita obligatoria, que sigue

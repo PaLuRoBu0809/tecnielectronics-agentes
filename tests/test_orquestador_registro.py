@@ -51,12 +51,12 @@ VENTAS = SubAgente(
 )
 
 # ---------------------------------------------------------------------------
-# 1) Registro real (Fase 12): Servicio Técnico y Ventas, sin nota temporal.
+# 1) Registro real (Fase 12): Servicio Técnico y Ventas.
 # ---------------------------------------------------------------------------
 assert [t["function"]["name"] for t in orquestador.TOOLS_SCHEMA] == [
     "Agente_Servicio_Tecnico", "Agente_Ventas", "Info_empresa"]
 assert orquestador.TOOLS_SCHEMA[1]["function"]["parameters"]["required"] == ["mensaje_cliente"]
-assert "NOTA TEMPORAL" not in orquestador.SYSTEM_PROMPT
+
 assert orquestador.SYSTEM_PROMPT == (
     orquestador.ORIGINAL_SYSTEM_PROMPT + orquestador.NOTA_ASESOR_COMERCIAL + orquestador.NOTA_CONOCIMIENTO_EMPRESA
 ), "Prompt original intacto + las notas al final"
@@ -79,19 +79,18 @@ for sub in orquestador.SUBAGENTES:
 print("✅ Registro real: Servicio Técnico y Ventas como tools; prompt original + nota de asesor comercial.")
 
 # ---------------------------------------------------------------------------
-# 2) Sin Ventas registrado, la nota temporal vuelve (la regla sigue viva).
+# 2) El schema se deriva del registro: un sub-agente por tool + Info_empresa.
 # ---------------------------------------------------------------------------
 solo_servicio = tuple(s for s in orquestador.SUBAGENTES if s.tool != "Agente_Ventas")
-assert "NOTA TEMPORAL DE ESTA FASE DE DESARROLLO" in orquestador.construir_system_prompt(solo_servicio)
 assert [t["function"]["name"] for t in orquestador.construir_tools_schema(solo_servicio)] == [
     "Agente_Servicio_Tecnico", "Info_empresa"]
 
 # Para el turno simulado, Ventas se reemplaza por el sub-agente falso.
 registro = solo_servicio + (VENTAS,)
 schema = orquestador.construir_tools_schema(registro)
-prompt = orquestador.construir_system_prompt(registro)
+prompt = orquestador.construir_system_prompt()
 assert prompt == orquestador.SYSTEM_PROMPT
-print("✅ Sin Ventas registrado la nota temporal reaparece; con él, desaparece.")
+print("✅ El schema del orquestador se deriva del registro de sub-agentes.")
 
 # ---------------------------------------------------------------------------
 # 3) Turno completo con el LLM simulado: el orquestador delega a Ventas.
