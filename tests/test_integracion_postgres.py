@@ -169,10 +169,21 @@ def _stock(conn, producto):
 
 
 def _probar_info_empresa(conn, migraciones) -> None:
-    """Migración 011: tabla de información de la empresa."""
+    """Migraciones 011 y 012: información de la empresa."""
     filas = dict(conn.execute("select tema, uso from info_empresa").fetchall())
     assert filas["contacto"] == "siempre" and filas["quienes_somos"] == "bajo_demanda", filas
-    assert len(filas) == 9, filas
+    assert filas["horario"] == "siempre" and filas["historia"] == "bajo_demanda", "La 012 agrega horario e historia"
+    assert len(filas) == 11, filas
+    ubicacion = conn.execute("select contenido from info_empresa where tema = 'ubicacion'").fetchone()[0]
+    assert ubicacion == "Cartagena, Bolívar. Urb. La Gloria, Casa 1, Av. del Consulado.", ubicacion
+    historia = conn.execute("select contenido from info_empresa where tema = 'historia'").fetchone()[0]
+    assert "10 de julio de 1995" in historia and "Te gustaría" not in historia, "Sin la línea final del chatbot"
+
+    conn.execute("update info_empresa set contenido = 'Nueva sede' where tema = 'ubicacion'")
+    conn.execute(next(m for m in migraciones if "horario_historia" in m.name).read_text(encoding="utf-8"))
+    assert conn.execute("select contenido from info_empresa where tema = 'ubicacion'").fetchone()[0] == "Nueva sede", (
+        "Re-aplicar la 012 no debe pisar una dirección que la empresa ya editó"
+    )
     _debe_fallar(conn, "insert into info_empresa (tema, titulo, contenido, uso) values ('x', 'X', 'algo', 'a veces')",
                  errors.CheckViolation, "uso solo acepta 'siempre' o 'bajo_demanda'")
     _debe_fallar(conn, "insert into info_empresa (tema, titulo, contenido) values ('Mi Tema', 'X', 'algo')",
@@ -185,7 +196,7 @@ def _probar_info_empresa(conn, migraciones) -> None:
     conn.execute(next(m for m in migraciones if "info_empresa" in m.name).read_text(encoding="utf-8"))
     contenido = conn.execute("select contenido from info_empresa where tema = 'contacto'").fetchone()[0]
     assert contenido == "Línea: 300 000 0000", "Re-aplicar la 011 no debe pisar lo que editó la empresa"
-    print("✅ 011: info_empresa sembrada (9 temas), valida uso/tema/contenido y no pisa ediciones al re-aplicar.")
+    print("✅ 011 y 012: info_empresa con 11 temas (horario e historia), valida datos y no pisa ediciones.")
 
 
 def _probar_ventas(conn) -> None:
