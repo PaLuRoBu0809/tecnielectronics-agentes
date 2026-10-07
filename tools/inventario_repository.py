@@ -30,23 +30,22 @@ Cómo se combinan las palabras: entre sinónimos basta UNA ("portátil" O
 `supabase/migrations/20261001000008_sinonimos_busqueda.sql` y
 `20261001000009_busqueda_por_marca_y_precio.sql`).
 
-Categorías y sinónimos cambian poco: se guardan en memoria
-`SEGUNDOS_CACHE` segundos. Un cambio de la empresa en la tabla de
+Categorías y sinónimos cambian poco: se guardan en memoria 10 minutos
+(`tools/cache.py`). Un cambio de la empresa en la tabla de
 sinónimos se nota, como mucho, a los 10 minutos.
 """
 from __future__ import annotations
 
 import os
 import re
-import time
 import unicodedata
 from dataclasses import dataclass, replace
 from decimal import Decimal
-from typing import Callable, Optional
+from typing import Optional
 
 from tools import supabase_client
+from tools.cache import CacheConVencimiento
 
-SEGUNDOS_CACHE = 600
 MAX_RESULTADOS = 5
 # Valores de `orden`: mostrar SIEMPRE, ordenado por precio en ese sentido.
 ORDENES = ("mas_baratos", "mas_caros")
@@ -106,26 +105,6 @@ def _tabla_categorias() -> str:
 
 def _tabla_sinonimos() -> str:
     return os.environ.get("SUPABASE_TABLE_SINONIMOS", "sinonimos_busqueda")
-
-
-class _Cache:
-    """Un valor cargado bajo demanda que vence a los `SEGUNDOS_CACHE`."""
-
-    def __init__(self, cargar: Callable[[], object], reloj: Callable[[], float] = time.monotonic):
-        self._cargar = cargar
-        self._reloj = reloj
-        self._valor: object = None
-        self._cargado_en: Optional[float] = None
-
-    def obtener(self):
-        ahora = self._reloj()
-        if self._cargado_en is None or ahora - self._cargado_en > SEGUNDOS_CACHE:
-            self._valor = self._cargar()
-            self._cargado_en = ahora
-        return self._valor
-
-    def invalidar(self) -> None:
-        self._cargado_en = None
 
 
 # ---------------------------------------------------------------------------
@@ -206,8 +185,8 @@ def _cargar_sinonimos() -> list:
     return [f["palabras"] for f in filas]
 
 
-_categorias = _Cache(_cargar_categorias)
-_sinonimos = _Cache(_cargar_sinonimos)
+_categorias = CacheConVencimiento(_cargar_categorias)
+_sinonimos = CacheConVencimiento(_cargar_sinonimos)
 
 
 def listar_categorias() -> tuple:

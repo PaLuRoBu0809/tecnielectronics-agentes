@@ -27,6 +27,7 @@ os.environ.setdefault("SUPABASE_URL", "https://fake.supabase.co")
 os.environ.setdefault("SUPABASE_SERVICE_KEY", "fake-key")
 
 from tools import carrito_repository, inventario_repository, ordenes_repository, supabase_client  # noqa: E402
+from tools.cache import SEGUNDOS_CACHE, CacheConVencimiento  # noqa: E402
 from tools.errores_negocio import ErrorNegocio  # noqa: E402
 from tools.inventario_repository import expandir_termino, formas_singulares, normalizar  # noqa: E402
 
@@ -151,9 +152,9 @@ print("✅ Muchos resultados: resumen con total, rango y marcas; presupuesto y o
 # 3) Caché de sinónimos y categorías
 # ---------------------------------------------------------------------------
 reloj = MagicMock(return_value=0.0)
-cache = inventario_repository._Cache(MagicMock(side_effect=["v1", "v2"]), reloj=reloj)
+cache = CacheConVencimiento(MagicMock(side_effect=["v1", "v2"]), reloj=reloj)
 assert cache.obtener() == "v1" and cache.obtener() == "v1", "Dentro del plazo no se vuelve a cargar"
-reloj.return_value = inventario_repository.SEGUNDOS_CACHE + 1
+reloj.return_value = SEGUNDOS_CACHE + 1
 assert cache.obtener() == "v2", "Vencido el plazo se recarga (la empresa editó los sinónimos)"
 
 inventario_repository._categorias.invalidar()

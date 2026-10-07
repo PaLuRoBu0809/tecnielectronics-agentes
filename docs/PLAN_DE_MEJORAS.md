@@ -258,6 +258,23 @@ una búsqueda típica en Ventas hacía 5 llamadas (~22 s). Cambios:
 - Resultado medido ("busco unos audífonos", 3 corridas): **3 llamadas** al
   modelo (antes 5) y **7–13 s** (antes ~22 s de mediana).
 
+### E.3 Conocimiento de la empresa (2026-10-07)
+
+- Tabla `info_empresa` (migración 011): una fila por tema, `uso` = 'siempre'
+  (va en el prompt del orquestador en cada mensaje: contacto, ubicación,
+  redes, medios de pago) o 'bajo_demanda' (la tool `Info_empresa` lo entrega
+  solo si preguntan: quiénes somos, pagos de la tienda web con GOU, privacidad).
+  La empresa la edita desde el Table Editor; se nota en máximo 10 minutos.
+- `NOTA_CONOCIMIENTO_EMPRESA` en el orquestador: responde él mismo las
+  preguntas sobre la empresa, solo con esos datos (no inventa: lo que falta
+  se responde con la línea de contacto), recomienda Instagram sin insistir y
+  da la línea de atención cuando piden un humano o hay reclamos.
+- Decisiones del negocio: nombre oficial TECNIELECTRONIS & CIA SAS; atención
+  humana = línea 301 208 6262 y correos; por el chat se paga con MercadoPago o
+  contra entrega (GOU Pagos es solo de la tienda web).
+- Faltan datos que el negocio puede agregar en la tabla: horario e historia
+  de fundación.
+
 ### Pasos pendientes para terminar la Fase 12
 
 1. **Re-probar en el chat** los casos de E.1 y una compra **en línea**

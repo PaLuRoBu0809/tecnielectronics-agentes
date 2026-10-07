@@ -25,7 +25,7 @@ from typing import Callable, Optional
 from contexto_conversacion import aplicar_ventana
 from llm_loop import PresupuestoTurno, run_agent_loop
 from agents import servicio_tecnico_agent, ventas_agent
-from tools import eventos_agente
+from tools import eventos_agente, info_empresa
 
 logger = logging.getLogger(__name__)
 
@@ -267,6 +267,71 @@ es que el cliente conozca y aproveche TODO lo que ofrece la empresa.
    invocación en el mismo turno.
 """
 
+NOTA_CONOCIMIENTO_EMPRESA = """
+
+---
+NOTA DE CONOCIMIENTO DE LA EMPRESA (adición explícita pedida por el negocio,
+Fase 12 de docs/PLAN_DE_MEJORAS.md; prevalece sobre la FASE 4 "Fuera de
+Alcance" en estos puntos concretos):
+
+1. Las preguntas SOBRE LA EMPRESA (quiénes son, a qué se dedican, dónde
+   están, cómo contactarlos, redes sociales, medios de pago, políticas,
+   privacidad) las respondes TÚ, aunque se esté conversando con un
+   subagente. No son fuera de alcance y no se delegan.
+
+2. Responde SOLO con la "INFORMACIÓN DE LA EMPRESA" que aparece al final de
+   este prompt o con lo que devuelva {Info_empresa}. Si un dato no está (por
+   ejemplo, el horario o la historia de cómo se fundó), di con naturalidad
+   que no lo tienes a la mano y ofrece la línea de contacto. Nunca inventes
+   datos, fechas, cifras ni nombres.
+
+3. Para los temas consultables, llama {Info_empresa} con el tema exacto de
+   la lista. Responde en estilo WhatsApp: un resumen de 2 a 4 frases y la
+   oferta de contar más; no pegues el texto completo salvo que el cliente
+   lo pida.
+
+4. INSTAGRAM: recomiéndalo, con su link, cuando el cliente quiera ver más
+   productos, fotos o novedades, o al despedirse. Sin insistir: como mucho
+   una vez por conversación.
+
+5. ATENCIÓN HUMANA: si el cliente pide hablar con una persona o un asesor,
+   está molesto, o su caso no lo pueden resolver los subagentes (reembolsos,
+   reclamos, casos especiales), dale la línea de atención y el correo que
+   corresponda (ventas, o pagos/quejas/reclamos), copiados tal como aparecen
+   en la información. No agregues canales que no estén escritos (por
+   ejemplo, no digas que la línea es de WhatsApp si no lo dice), no prometas
+   que alguien lo llamará o le escribirá, ni des tiempos de respuesta.
+
+6. MEDIOS DE PAGO: por este chat se paga con link de MercadoPago o contra
+   entrega. GOU Pagos es solo de la tienda virtual (página web): no los
+   mezcles.
+
+7. Cuando menciones a la empresa formalmente, usa su nombre oficial escrito
+   exactamente así: TECNIELECTRONIS & CIA SAS (con "-NIS", sin "C").
+"""
+
+TOOL_INFO_EMPRESA = "Info_empresa"
+SCHEMA_INFO_EMPRESA = {
+    "type": "function",
+    "function": {
+        "name": TOOL_INFO_EMPRESA,
+        "description": (
+            "Devuelve la información registrada de la empresa sobre un tema consultable (ej. quienes_somos, "
+            "pagos_tienda_web, privacidad). Úsala solo para preguntas sobre la empresa."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "tema": {
+                    "type": "string",
+                    "description": "El tema exacto de la lista de temas consultables, ej. 'quienes_somos'.",
+                }
+            },
+            "required": ["tema"],
+        },
+    },
+}
+
 # ---------------------------------------------------------------------------
 # Registro de sub-agentes (Fase 11 de docs/PLAN_DE_MEJORAS.md)
 # ---------------------------------------------------------------------------
@@ -355,16 +420,19 @@ def _schema_de(sub: SubAgente) -> dict:
 
 
 def construir_tools_schema(subagentes=SUBAGENTES) -> list:
-    return [_schema_de(sub) for sub in subagentes]
+    """Un sub-agente por tool, más la consulta de información de la empresa."""
+    return [_schema_de(sub) for sub in subagentes] + [SCHEMA_INFO_EMPRESA]
 
 
 def construir_system_prompt(subagentes=SUBAGENTES) -> str:
-    """Prompt original + nota de asesor comercial. La nota temporal solo
-    existe mientras Agente_Ventas no esté registrado: al agregarlo a
-    SUBAGENTES desaparece sola."""
+    """Prompt original + notas de asesor comercial y de conocimiento de la
+    empresa. La nota temporal solo existe mientras Agente_Ventas no esté
+    registrado: al agregarlo a SUBAGENTES desaparece sola. Los DATOS de la
+    empresa no van aquí sino en cada turno (`info_empresa.nota_para_prompt`),
+    para que un cambio en la tabla se vea sin reiniciar."""
     ventas_registrado = any(s.tool == "Agente_Ventas" for s in subagentes)
     temporal = "" if ventas_registrado else NOTA_TEMPORAL_FASE_DESARROLLO
-    return ORIGINAL_SYSTEM_PROMPT + NOTA_ASESOR_COMERCIAL + temporal
+    return ORIGINAL_SYSTEM_PROMPT + NOTA_ASESOR_COMERCIAL + NOTA_CONOCIMIENTO_EMPRESA + temporal
 
 
 TOOLS_SCHEMA = construir_tools_schema()
@@ -471,6 +539,8 @@ def run(
         return tool
 
     tool_functions = {sub.tool: _tool_para(sub) for sub in SUBAGENTES}
+    # No es terminal: el orquestador redacta la respuesta con lo que devuelve.
+    tool_functions[TOOL_INFO_EMPRESA] = info_empresa.info_empresa
 
     historial_orq = historiales.get(CLAVE_HISTORIAL_ORQUESTADOR, []) + [{"role": "user", "content": mensaje_cliente}]
     # Solo los últimos turnos van al modelo (Fase 6); sin ficha: el
@@ -478,7 +548,7 @@ def run(
     # está atendiendo. Lo descartado se conserva en el historial guardado.
     descartados, ventana = aplicar_ventana(historial_orq)
     respuesta, ventana_actualizada = run_agent_loop(
-        system_prompt=SYSTEM_PROMPT,
+        system_prompt=SYSTEM_PROMPT + info_empresa.nota_para_prompt(),
         messages=ventana,
         tools_schema=TOOLS_SCHEMA,
         tool_functions=tool_functions,
