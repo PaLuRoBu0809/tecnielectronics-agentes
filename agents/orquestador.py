@@ -5,15 +5,15 @@ Traducción del "Agente Conversacional (Orquestador)" (el primer prompt que
 compartiste). ORIGINAL_SYSTEM_PROMPT es una transcripción fiel del texto
 original, sin reescribir nada de su lógica de negocio.
 
-Mientras solo existía el subagente de Servicio Técnico, se le agregaba una
-NOTA_TEMPORAL, separada del prompt original, para que no delegara a una
-herramienta inexistente. Desde la Fase 12 `Agente_Ventas` está registrado en
-`SUBAGENTES` (ver más abajo), así que la nota ya no se incluye.
-
-NOTA_ASESOR_COMERCIAL (Fase 12, pedida por el negocio tras probar el chat):
-saludos y preguntas generales presentan las dos líneas de negocio, venta
-cruzada al cerrar un proceso, y una sola delegación por mensaje. Esa última
-regla además se garantiza en código en `run()`.
+Al prompt original se le agregan notas separadas al final (adiciones
+explícitas del negocio, Fase 12):
+- NOTA_ASESOR_COMERCIAL: saludos y preguntas generales presentan las dos
+  líneas de negocio, la respuesta del subagente va directo al cliente y una
+  sola delegación por mensaje (estas dos últimas, garantizadas en código en
+  `run()`).
+- NOTA_CONOCIMIENTO_EMPRESA: la información de la empresa (tabla
+  `info_empresa`) como contexto para resolver dudas puntuales y redirigir a
+  ventas o servicio técnico.
 """
 from __future__ import annotations
 
@@ -219,18 +219,6 @@ Nunca dejes el segundo tema sin mencionar: el cliente no debe tener que repetir 
 7. **Transparencia de arquitectura**: nunca menciones al cliente que existen "agentes", "subagentes", "herramientas" o que estás "delegando". Para el cliente, todo es una sola conversación fluida con Tecnielectronics."""
 
 
-NOTA_TEMPORAL_FASE_DESARROLLO = """
-
----
-NOTA TEMPORAL DE ESTA FASE DE DESARROLLO (no es parte del prompt de negocio,
-bórrala cuando Agente_Ventas esté implementado y agregado a las tools):
-Por ahora SOLO existe la herramienta Agente_Servicio_Tecnico — Agente_Ventas
-todavía no está construido. Si detectas una intención clara de venta, no
-intentes invocar Agente_Ventas (no existe todavía): dile al cliente, en una
-sola línea breve y cordial, que en este momento solo puedes ayudarlo con
-servicio técnico y que la línea de ventas estará disponible pronto. No
-inventes productos, precios ni disponibilidad bajo ninguna circunstancia."""
-
 NOTA_ASESOR_COMERCIAL = """
 
 ---
@@ -353,8 +341,8 @@ SCHEMA_INFO_EMPRESA = {
 #   1. crear agents/ventas_agent.py con una función `run(mensaje_cliente,
 #      session_id, historial, run_id, presupuesto) -> (texto, historial)`;
 #   2. agregar su `SubAgente(...)` a SUBAGENTES.
-# El TOOLS_SCHEMA, las tools, el historial por agente en Supabase y la nota
-# temporal se derivan solos de este registro. Guía completa en el plan.
+# El TOOLS_SCHEMA, las tools y el historial por agente en Supabase se
+# derivan solos de este registro. Guía completa en el plan.
 
 
 @dataclass(frozen=True)
@@ -437,15 +425,12 @@ def construir_tools_schema(subagentes=SUBAGENTES) -> list:
     return [_schema_de(sub) for sub in subagentes] + [SCHEMA_INFO_EMPRESA]
 
 
-def construir_system_prompt(subagentes=SUBAGENTES) -> str:
+def construir_system_prompt() -> str:
     """Prompt original + notas de asesor comercial y de conocimiento de la
-    empresa. La nota temporal solo existe mientras Agente_Ventas no esté
-    registrado: al agregarlo a SUBAGENTES desaparece sola. Los DATOS de la
-    empresa no van aquí sino en cada turno (`info_empresa.nota_para_prompt`),
-    para que un cambio en la tabla se vea sin reiniciar."""
-    ventas_registrado = any(s.tool == "Agente_Ventas" for s in subagentes)
-    temporal = "" if ventas_registrado else NOTA_TEMPORAL_FASE_DESARROLLO
-    return ORIGINAL_SYSTEM_PROMPT + NOTA_ASESOR_COMERCIAL + NOTA_CONOCIMIENTO_EMPRESA + temporal
+    empresa. Los DATOS de la empresa no van aquí sino en cada turno
+    (`info_empresa.nota_para_prompt`), para que un cambio en la tabla se vea
+    sin reiniciar."""
+    return ORIGINAL_SYSTEM_PROMPT + NOTA_ASESOR_COMERCIAL + NOTA_CONOCIMIENTO_EMPRESA
 
 
 TOOLS_SCHEMA = construir_tools_schema()
