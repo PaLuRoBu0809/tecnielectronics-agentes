@@ -23,14 +23,17 @@ inyectan en Python: el modelo nunca los ve ni los pasa.
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from functools import partial
 from typing import Callable, Optional
 
 from contexto_conversacion import aplicar_ventana, construir_ficha, nota_ficha
 from llm_loop import run_agent_loop
-from tools import carrito_tools, inventario_tools, ordenes_tools
+from tools import carrito_tools, inventario_repository, inventario_tools, ordenes_tools
 from tools.validacion_tools import ARGUMENTOS_VENTAS, con_validacion
+
+logger = logging.getLogger(__name__)
 
 ORIGINAL_SYSTEM_PROMPT = """<ROL>
 Eres el Agente de Ventas, un agente-herramienta invocado por el Agente Orquestador de tecnielectronics. Tu única función es gestionar el área de ventas: consultar inventario, administrar el carrito de compras del cliente, y procesar la creación, consulta, modificación o cancelación de pedidos.
@@ -223,6 +226,34 @@ pedirá confirmar de nuevo.
 
 SYSTEM_PROMPT = ORIGINAL_SYSTEM_PROMPT + NOTA_HERRAMIENTAS + NOTA_CONFIRMACION_OBLIGATORIA
 
+ENCABEZADO_NOTA_CATEGORIAS = """
+
+---
+NOTA DE CATEGORÍAS VIGENTES (inyectada automáticamente en cada turno;
+prevalece sobre la regla de llamar a {Categorias_inventario} antes de cada
+{Inventario}). Estas son las categorías del inventario en este momento, las
+mismas que devolvería {Categorias_inventario}; por eso en este turno esa
+herramienta no está disponible. Úsalas directamente: copia el category_id
+literalmente al llamar a {Inventario}, y si el cliente pide ver el
+catálogo, ofrécele estos nombres. Los ids son internos: nunca los muestres.
+"""
+
+
+def nota_categorias() -> str:
+    """Las categorías vigentes (caché de 10 min en `inventario_repository`)
+    como nota del prompt: ahorra una llamada al modelo por cada búsqueda
+    de producto. Si no se pueden leer, no se agrega nada y el agente usa
+    {Categorias_inventario} como siempre."""
+    try:
+        categorias = inventario_repository.listar_categorias()
+    except Exception:
+        logger.warning("No se pudieron leer las categorías para el prompt de Ventas", exc_info=True)
+        return ""
+    if not categorias:
+        return ""
+    lineas = "\n".join(f"category_id={c.id} | nombre={c.nombre}" for c in categorias)
+    return ENCABEZADO_NOTA_CATEGORIAS + lineas
+
 
 def _tool(nombre: str, descripcion: str, propiedades: Optional[dict] = None, requeridos=()) -> dict:
     return {
@@ -326,6 +357,12 @@ TOOLS_SCHEMA = [
 ]
 
 
+# Cuando las categorías van en el prompt (`nota_categorias`), el turno se
+# arma sin esta tool: el modelo no puede gastar una llamada en pedirlas.
+TOOL_CATEGORIAS = "Categorias_inventario"
+TOOLS_SCHEMA_SIN_CATEGORIAS = [t for t in TOOLS_SCHEMA if t["function"]["name"] != TOOL_CATEGORIAS]
+
+
 # Datos del cliente que se rescatan para la ficha de contexto cuando la
 # conversación es larga (Fase 6 de docs/PLAN_DE_MEJORAS.md). El carrito y
 # los pedidos NO van en la ficha: cambian, y siempre se consultan.
@@ -374,13 +411,25 @@ def run(
     `(texto, historial_completo)`."""
     historial = (historial or []) + [{"role": "user", "content": mensaje_cliente}]
     descartados, ventana = aplicar_ventana(historial)
+    # Sin run_id (llamada directa, fuera del orquestador) cada llamada
+    # cuenta como un turno propio.
+    tools_schema = TOOLS_SCHEMA
+    tool_functions = _tool_functions_para_sesion(session_id, run_id or uuid.uuid4().hex)
+    categorias = nota_categorias()
+    if categorias:
+        # Medido el 2026-10-07: con las categorías solo en el prompt, el
+        # modelo igual llamaba a Categorias_inventario (el prompt original
+        # dice "SIEMPRE"). Sin la tool en este turno, ahorra esa llamada.
+        tools_schema = TOOLS_SCHEMA_SIN_CATEGORIAS
+        tool_functions = {n: f for n, f in tool_functions.items() if n != TOOL_CATEGORIAS}
     texto, ventana_actualizada = run_agent_loop(
-        system_prompt=SYSTEM_PROMPT + nota_ficha(construir_ficha(descartados, CAMPOS_FICHA), RECORDATORIO_FICHA),
+        system_prompt=(
+            SYSTEM_PROMPT + categorias
+            + nota_ficha(construir_ficha(descartados, CAMPOS_FICHA), RECORDATORIO_FICHA)
+        ),
         messages=ventana,
-        tools_schema=TOOLS_SCHEMA,
-        # Sin run_id (llamada directa, fuera del orquestador) cada llamada
-        # cuenta como un turno propio.
-        tool_functions=_tool_functions_para_sesion(session_id, run_id or uuid.uuid4().hex),
+        tools_schema=tools_schema,
+        tool_functions=tool_functions,
         contexto={"agente": "Ventas", "session_id": session_id, "run_id": run_id, "presupuesto": presupuesto},
     )
     return texto, descartados + ventana_actualizada

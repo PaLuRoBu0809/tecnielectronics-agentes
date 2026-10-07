@@ -367,6 +367,7 @@ def run_agent_loop(
     models: Optional[list] = None,
     contexto: Optional[dict] = None,
     reenviar_ultima_tool_si_se_agota: bool = False,
+    tools_terminales: frozenset = frozenset(),
 ):
     """
     Ejecuta el loop completo de tool use para UN agente.
@@ -398,6 +399,13 @@ def run_agent_loop(
         del sub-agente, así que si el sub-agente ya respondió (quizá
         confirmando una cita), no se pierde esa respuesta por falta de una
         última llamada al LLM.
+    tools_terminales : nombres de tools cuyo resultado ES la respuesta
+        final: en cuanto una devuelve un resultado válido (no "ERROR"), el
+        loop termina con ese texto, SIN otra llamada al modelo. Lo usa el
+        orquestador con sus sub-agentes: la respuesta del sub-agente va
+        directo al cliente, y se ahorra una llamada por turno que solo
+        copiaba el texto (y que era donde el modelo a veces escribía notas
+        como "[Esperando al cliente]" en vez de reenviar la respuesta).
 
     Devuelve
     --------
@@ -470,14 +478,11 @@ def run_agent_loop(
                     "tool_calls": [tc.model_dump() for tc in msg.tool_calls],
                 }
             )
-            for tool_call in msg.tool_calls:
-                full_messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": _ejecutar_tool(tool_call, tool_functions, contexto),
-                    }
-                )
+            respuesta_terminal = _ejecutar_tool_calls(
+                msg.tool_calls, full_messages, tool_functions, contexto, tools_terminales
+            )
+            if respuesta_terminal is not None:
+                return _terminar(respuesta_terminal, "final")
 
         return _respaldo("max_iteraciones")
     except ErrorCredencialesLLM:
@@ -486,6 +491,22 @@ def run_agent_loop(
     except Exception:  # nunca dejar caer el turno completo
         logger.exception("Error inesperado dentro del loop de %s", contexto.get("agente"))
         return _respaldo("error_interno")
+
+
+def _ejecutar_tool_calls(tool_calls, full_messages: list, tool_functions: dict, contexto: dict,
+                         tools_terminales: frozenset) -> Optional[str]:
+    """Ejecuta las tool calls de UNA respuesta del modelo y agrega sus
+    resultados al historial. Devuelve el resultado de la primera tool
+    terminal que respondió sin error (ver `tools_terminales` en
+    `run_agent_loop`), o `None` si el loop debe seguir."""
+    respuesta_terminal = None
+    for tool_call in tool_calls:
+        resultado = _ejecutar_tool(tool_call, tool_functions, contexto)
+        full_messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": resultado})
+        if (respuesta_terminal is None and tool_call.function.name in tools_terminales
+                and not resultado.startswith("ERROR")):
+            respuesta_terminal = resultado
+    return respuesta_terminal
 
 
 def _ejecutar_tool(tool_call, tool_functions: dict, contexto: dict) -> str:

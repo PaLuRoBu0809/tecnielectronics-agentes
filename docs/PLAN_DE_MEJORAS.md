@@ -237,6 +237,27 @@ Problemas vistos en la conversación de prueba y su corrección:
 - "Flujo en Vivo": nodo Ventas activo, sus 10 tools y el nodo MercadoPago.
 - Chat web: negritas (`**x**` / `*x*`) y enlaces clicables, sin `innerHTML`.
 
+### E.2 Rendimiento (2026-10-07)
+
+Medido en Render: cada llamada al modelo tarda ~3,5 s (mediana; p90 9,2 s) y
+una búsqueda típica en Ventas hacía 5 llamadas (~22 s). Cambios:
+
+- **Modelos**: fuera `qwen3.8-27b:free` (dejó de ser gratis), `gemma-4-31b:free`
+  (siempre 429) e `inkling:free` (403). Lista elegida con una prueba real de
+  enrutamiento con tools: nemotron-3-super, nemotron-3-ultra,
+  nemotron-3.5-lightning y cohere north-mini-code.
+- **Respuesta directa del sub-agente** (`tools_terminales` en `run_agent_loop`):
+  el orquestador ya no hace una 2ª llamada solo para copiar la respuesta. La
+  venta cruzada pasó al código (`SubAgente.tool_de_cierre` / `venta_cruzada`:
+  tras `Crear_orden` o `Crear_evento` exitosos, una vez por conversación). La
+  línea del "tema pendiente" ya no aplica.
+- **Categorías en el prompt de Ventas** (`nota_categorias`): con las categorías
+  en el prompt, el turno se arma sin `Categorias_inventario`. Solo con la nota
+  el modelo la seguía llamando (el prompt original dice "SIEMPRE"); si no se
+  pueden leer las categorías, la tool vuelve a ofrecerse.
+- Resultado medido ("busco unos audífonos", 3 corridas): **3 llamadas** al
+  modelo (antes 5) y **7–13 s** (antes ~22 s de mediana).
+
 ### Pasos pendientes para terminar la Fase 12
 
 1. **Re-probar en el chat** los casos de E.1 y una compra **en línea**

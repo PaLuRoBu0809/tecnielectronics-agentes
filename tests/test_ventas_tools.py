@@ -348,14 +348,49 @@ print("✅ Confirmación compartida: una cita y una orden pendientes del mismo c
 # ---------------------------------------------------------------------------
 # 9) run(): contexto del agente y session_id/turno inyectados.
 # ---------------------------------------------------------------------------
-with patch.object(ventas_agent, "run_agent_loop", return_value=("¡Claro!", [{"role": "assistant"}])) as loop_mock:
+CATEGORIAS = (inventario_repository.Categoria(CATEGORIA, "Computadores y Laptops"),
+              inventario_repository.Categoria("2a604c87-1314-45da-a1ad-0a4a7c325183", "Redes y Conectividad"))
+with (
+    patch.object(ventas_agent, "run_agent_loop", return_value=("¡Claro!", [{"role": "assistant"}])) as loop_mock,
+    patch.object(inventario_repository, "listar_categorias", return_value=CATEGORIAS),
+):
     texto, historial = ventas_agent.run("quiero un mouse", SESION, historial=[], run_id="run-9", presupuesto="P")
 kwargs = loop_mock.call_args.kwargs
 assert kwargs["contexto"] == {"agente": "Ventas", "session_id": SESION, "run_id": "run-9", "presupuesto": "P"}
-assert kwargs["tools_schema"] is ventas_agent.TOOLS_SCHEMA and kwargs["system_prompt"].startswith(
-    ventas_agent.SYSTEM_PROMPT)
-assert set(kwargs["tool_functions"]) == {t["function"]["name"] for t in ventas_agent.TOOLS_SCHEMA}
+assert kwargs["system_prompt"].startswith(ventas_agent.SYSTEM_PROMPT)
+assert set(kwargs["tool_functions"]) == {t["function"]["name"] for t in kwargs["tools_schema"]}, (
+    "Schema y funciones del turno siempre coinciden"
+)
 assert texto == "¡Claro!" and historial == [{"role": "assistant"}]
-print("✅ run(): agente 'Ventas', run_id como turno de confirmación y todas las tools disponibles.")
+print("✅ run(): agente 'Ventas', run_id como turno de confirmación y schema/funciones coherentes.")
+
+# ---------------------------------------------------------------------------
+# 10) Categorías en el prompt: Ventas busca sin llamar antes a
+#     Categorias_inventario (una llamada menos al modelo por búsqueda).
+# ---------------------------------------------------------------------------
+prompt = kwargs["system_prompt"]
+assert f"category_id={CATEGORIA} | nombre=Computadores y Laptops" in prompt
+assert "NOTA DE CATEGORÍAS VIGENTES" in prompt and "esa\nherramienta no está disponible" in prompt
+assert prompt.index("NOTA DE CATEGORÍAS VIGENTES") > len(ventas_agent.ORIGINAL_SYSTEM_PROMPT), (
+    "La nota va después del prompt original, que no se toca"
+)
+nombres_turno = {t["function"]["name"] for t in kwargs["tools_schema"]}
+assert "Categorias_inventario" not in nombres_turno and "Inventario" in nombres_turno, (
+    "Con las categorías en el prompt, el turno no ofrece Categorias_inventario (el modelo no gasta esa llamada)"
+)
+with (
+    patch.object(ventas_agent, "run_agent_loop", return_value=("ok", [])) as loop_mock,
+    patch.object(inventario_repository, "listar_categorias", side_effect=ConnectionError("Supabase caído")),
+):
+    ventas_agent.run("quiero un mouse", SESION, historial=[], run_id="run-10")
+assert loop_mock.call_args.kwargs["tools_schema"] is ventas_agent.TOOLS_SCHEMA, (
+    "Si no se pudieron leer las categorías, la tool vuelve a estar disponible"
+)
+assert "Categorias_inventario" in loop_mock.call_args.kwargs["tool_functions"]
+with patch.object(inventario_repository, "listar_categorias", side_effect=ConnectionError("Supabase caído")):
+    assert ventas_agent.nota_categorias() == "", "Si no se pueden leer, no hay nota: se usa la tool como siempre"
+with patch.object(inventario_repository, "listar_categorias", return_value=()):
+    assert ventas_agent.nota_categorias() == ""
+print("✅ Categorías en el prompt de Ventas; si no se pueden leer, se sigue usando Categorias_inventario.")
 
 print("\n✅ Todos los tests de las tools de Ventas pasaron.")
