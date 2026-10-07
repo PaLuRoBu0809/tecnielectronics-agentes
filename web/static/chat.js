@@ -41,6 +41,10 @@ function guardarTranscripts(transcripts) {
 
 let transcripts = leerTranscripts();
 let sesionActual = null;
+// Conversaciones con una respuesta del agente en camino. Mientras una está
+// aquí, al dibujarla se muestra "escribiendo…" (aunque se cambie de
+// conversación y se vuelva). Se marca al enviar y se desmarca al terminar.
+const pendientes = new Set();
 
 const el = {
   sessionInput: document.getElementById("session-input"),
@@ -91,11 +95,22 @@ function crearBurbuja(quien, texto) {
   return div;
 }
 
+function crearIndicadorEscribiendo() {
+  const indicador = crearBurbuja("bot", "TecniElectronics está escribiendo…");
+  indicador.classList.add("escribiendo");
+  return indicador;
+}
+
+/** Dibuja la conversación abierta: sus mensajes y, si el agente todavía está
+ * respondiendo en ella, el "escribiendo…" al final. */
 function renderMensajes() {
   el.mensajes.innerHTML = "";
   const historial = transcripts[sesionActual] || [];
   for (const m of historial) {
     el.mensajes.appendChild(crearBurbuja(m.quien, m.texto));
+  }
+  if (pendientes.has(sesionActual)) {
+    el.mensajes.appendChild(crearIndicadorEscribiendo());
   }
   el.mensajes.scrollTop = el.mensajes.scrollHeight;
 }
@@ -136,14 +151,13 @@ async function enviarMensaje(mensaje) {
   // espera se cambie a otra conversación (bug real: la respuesta se pegaba
   // en la conversación abierta en ese momento y el cliente no la veía).
   const sesion = sesionActual;
+  // Se marca ANTES de agregar el mensaje: así el mismo dibujo muestra el
+  // mensaje del cliente y, debajo, el "escribiendo…".
+  pendientes.add(sesion);
   agregarMensaje("cliente", mensaje, sesion);
-
-  const indicador = crearBurbuja("bot", "TecniElectronics está escribiendo…");
-  indicador.classList.add("escribiendo");
-  el.mensajes.appendChild(indicador);
-  el.mensajes.scrollTop = el.mensajes.scrollHeight;
   el.input.disabled = true;
 
+  let respuesta;
   try {
     const resp = await apiFetch("/api/chat", {
       method: "POST",
@@ -158,12 +172,14 @@ async function enviarMensaje(mensaje) {
       throw new Error(`El servidor respondió ${resp.status}`);
     }
     const datos = await resp.json();
-    indicador.remove();
-    agregarMensaje("bot", datos.respuesta, sesion);
+    respuesta = datos.respuesta;
   } catch (err) {
-    indicador.remove();
-    agregarMensaje("bot", `⚠️ No se pudo obtener respuesta: ${err.message}`, sesion);
+    respuesta = `⚠️ No se pudo obtener respuesta: ${err.message}`;
   } finally {
+    // Siempre se desmarca (respuesta o error) ANTES de agregar la respuesta:
+    // así se dibuja una sola vez, con la respuesta y sin el "escribiendo…".
+    pendientes.delete(sesion);
+    agregarMensaje("bot", respuesta, sesion);
     el.input.disabled = false;
     el.input.focus();
   }
