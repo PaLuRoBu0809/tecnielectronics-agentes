@@ -7,4 +7,5 @@ python-dotenv>=1.2,<2       # carga de .env
 fastapi>=0.141,<1           # API HTTP (web/app.py)
 pydantic>=2.13,<3           # validación de argumentos de tools (tools/validacion_tools.py)
 anyio>=4.15,<5              # stream SSE del panel (web/app.py)
+holidays>=0.106,<1          # festivos de Colombia (tools/agenda_entregas.py)
 uvicorn[standard]>=0.54,<1  # servidor ASGI para correr web/app.py

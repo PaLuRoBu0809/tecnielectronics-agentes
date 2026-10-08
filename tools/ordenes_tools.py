@@ -33,7 +33,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from tools import carrito_repository, ordenes_repository, pagos, servicio_pagos
-from tools.citas_tools import formatear_fecha_legible
+from tools.fechas import formatear_fecha_legible
 from tools.confirmacion import requiere_confirmacion
 from tools.errores_negocio import ErrorNegocio
 from tools.formato_ventas import error_tecnico, mensaje_error_negocio, resumen_carrito, resumen_orden
@@ -178,17 +178,28 @@ def _conciliar_pagos(ordenes: list) -> list:
     return actualizadas
 
 
+def _con_seguimiento(ordenes: list) -> list:
+    """Agrega a cada orden sus notas del dashboard (`seguimiento`). Si no se
+    pueden leer, se responde igual sin ellas."""
+    try:
+        notas = ordenes_repository.seguimiento([o["order_number"] for o in ordenes])
+    except Exception:
+        logger.warning("No se pudo leer el seguimiento de los pedidos", exc_info=True)
+        return ordenes
+    return [{**o, "seguimiento": notas.get(o["order_number"], [])} for o in ordenes]
+
+
 def consultar_orden(session_id: str, order_number: Optional[int] = None) -> str:
     try:
         if order_number is None:
-            ordenes = _conciliar_pagos(ordenes_repository.listar(session_id))
+            ordenes = _con_seguimiento(_conciliar_pagos(ordenes_repository.listar(session_id)))
             if not ordenes:
                 return "SIN_PEDIDOS: el cliente no tiene pedidos activos (no cancelados)."
             return "PEDIDOS DEL CLIENTE (del más reciente al más antiguo):\n" + _listado(ordenes)
 
         orden = ordenes_repository.leer(session_id, order_number)
         if orden is not None:
-            return resumen_orden(_conciliar_pagos([orden])[0])
+            return resumen_orden(_con_seguimiento(_conciliar_pagos([orden]))[0])
         ordenes = ordenes_repository.listar(session_id, incluir_canceladas=True)
     except Exception as exc:
         return error_tecnico("consultar los pedidos", exc)

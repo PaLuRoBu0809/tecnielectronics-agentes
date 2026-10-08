@@ -8,12 +8,16 @@
  *   3. RENDERIZADO    — construye filas y badges a partir de datos listos.
  *   4. INTERACCIÓN    — filtros, botón actualizar y carga inicial.
  *
- * Solo lectura: consume GET /api/pedidos (ver web/app.py), que lee directo
- * de la base de datos sin pasar por ningún agente. Los pedidos los crea el
- * agente de ventas cuando el cliente confirma.
+ * Consume GET /api/pedidos (ver web/app.py), que lee directo de la base de
+ * datos sin pasar por ningún agente. Los pedidos los crea el agente de
+ * ventas cuando el cliente confirma. Al hacer clic en un pedido se abre su
+ * detalle (seguimiento.js): cambiar el estado de envío y escribir o editar
+ * notas, siempre con el nombre de quien las registra (Fase 13). El estado de
+ * pago no se toca aquí: lo maneja MercadoPago.
  */
 
 import { apiFetch } from "./api.js";
+import { abrirDetalle, crearBadge, estadoVisible, formatearFechaHora } from "./seguimiento.js";
 
 // ---------------------------------------------------------------------
 // Constantes
@@ -61,11 +65,6 @@ function formatearPesos(valor) {
   return valor == null ? "—" : formatoPesos.format(Number(valor));
 }
 
-function formatearFecha(iso) {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleString("es-CO", { dateStyle: "medium", timeStyle: "short" });
-}
-
 /** `items` es una lista de {nombre, cantidad, ...}. */
 function resumenProductos(items) {
   if (!Array.isArray(items) || items.length === 0) return "—";
@@ -84,10 +83,6 @@ function textoBusqueda(pedido) {
   ].join(" ").toLowerCase();
 }
 
-function estadoVisible(mapa, valor) {
-  return mapa[valor] || { texto: valor || "Sin registro", clase: "badge-info" };
-}
-
 // ---------------------------------------------------------------------
 // 3. RENDERIZADO
 // ---------------------------------------------------------------------
@@ -103,13 +98,6 @@ const el = {
 };
 
 let pedidosCache = [];
-
-function crearBadge({ texto, clase }) {
-  const span = document.createElement("span");
-  span.className = `badge-estado ${clase}`;
-  span.textContent = texto;
-  return span;
-}
 
 function crearCelda(contenido, titulo) {
   const td = document.createElement("td");
@@ -136,13 +124,21 @@ function crearCeldaPago(pedido) {
 
 function crearFilaPedido(pedido) {
   const tr = document.createElement("tr");
+  tr.className = "fila-clicable";
+  tr.tabIndex = 0;
+  tr.title = "Ver detalle, cambiar estado de envío y notas";
+  tr.addEventListener("click", (evento) => {
+    if (evento.target.closest("a")) return; // el link de pago abre su propia pestaña
+    abrirPedido(pedido.order_number);
+  });
+  tr.addEventListener("keydown", (evento) => evento.key === "Enter" && abrirPedido(pedido.order_number));
   const cliente = `${pedido.customer_name || "—"} · ${pedido.customer_phone || "—"}`;
   const entrega = `${pedido.city || "—"} · ${pedido.customer_address || "—"}`;
   const productos = resumenProductos(pedido.items);
 
   tr.append(
     crearCelda(`#${pedido.order_number}`),
-    crearCelda(formatearFecha(pedido.created_at)),
+    crearCelda(formatearFechaHora(pedido.created_at)),
     crearCelda(cliente, pedido.session_id ? `WhatsApp: ${pedido.session_id}` : ""),
     crearCelda(entrega),
     crearCelda(productos, productos),
@@ -206,6 +202,38 @@ function mostrarErrorCarga(err) {
 // ---------------------------------------------------------------------
 // 4. INTERACCIÓN
 // ---------------------------------------------------------------------
+
+function abrirPedido(numero) {
+  abrirDetalle({
+    titulo: `Pedido #${numero}`,
+    estados: ESTADOS_ENVIO,
+    urlEstado: `${API_PEDIDOS}/${numero}/estado`,
+    urlNota: `${API_PEDIDOS}/${numero}/notas`,
+    urlEditarNota: (id) => `${API_PEDIDOS}/notas/${id}`,
+    confirmarEstado: {
+      CANCELADO: "Cancelar el pedido devuelve sus productos al inventario y no se puede deshacer. ¿Continuar?",
+    },
+    alCambiar: cargarPedidos,
+    cargar: async () => {
+      const resp = await apiFetch(`${API_PEDIDOS}/${numero}`);
+      if (!resp.ok) throw new Error(`No se pudo cargar el pedido (HTTP ${resp.status})`);
+      const { pedido, seguimiento } = await resp.json();
+      return {
+        estado: pedido.shipping_status,
+        notas: seguimiento,
+        datos: [
+          ["Pago", crearBadge(estadoVisible(ESTADOS_PAGO, pedido.payment_status))],
+          ["Cliente", `${pedido.customer_name || "—"} · ${pedido.customer_phone || "—"}`],
+          ["Entrega", `${pedido.city || "—"} · ${pedido.customer_address || "—"}`],
+          ["Productos", resumenProductos(pedido.items)],
+          ["Total", formatearPesos(pedido.total_amount)],
+          ["Método", METODOS[pedido.Metodo_pago] || "—"],
+          ["Creado", formatearFechaHora(pedido.created_at)],
+        ],
+      };
+    },
+  });
+}
 
 async function cargarPedidos() {
   el.actualizarBtn.disabled = true;

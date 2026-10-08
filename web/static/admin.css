@@ -353,6 +353,214 @@ th {
   text-align: center;
 }
 
+/* --- Filas y tarjetas que abren el detalle (Fase 13) --- */
+
+.fila-clicable {
+  cursor: pointer;
+}
+
+.fila-clicable:hover,
+.fila-clicable:focus-visible {
+  background: var(--color-fondo);
+  outline: none;
+}
+
+.panel-dia-item {
+  cursor: pointer;
+}
+
+.panel-dia-item:hover,
+.panel-dia-item:focus-visible {
+  border-color: var(--color-primario);
+  outline: none;
+}
+
+.calendario-conteo {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-primario);
+}
+
+/* La descripción del problema puede ser larga: se corta con "…". */
+#tabla-registros td:nth-child(7) {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* --- Panel de detalle: estado y notas (seguimiento.js) --- */
+
+.panel-detalle-fondo {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.35);
+  z-index: 50;
+}
+
+.panel-detalle {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(460px, 100vw);
+  background: var(--color-panel);
+  border-left: 1px solid var(--color-borde);
+  box-shadow: -12px 0 32px rgba(15, 23, 42, 0.15);
+  z-index: 51;
+  display: flex;
+  flex-direction: column;
+}
+
+.panel-detalle[hidden],
+.panel-detalle-fondo[hidden] {
+  display: none;
+}
+
+.panel-detalle-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--color-borde);
+}
+
+.panel-detalle-header h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.panel-detalle-cuerpo {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  font-size: 0.85rem;
+}
+
+.panel-detalle-cuerpo h4 {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+}
+
+.detalle-datos {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 12px;
+  margin: 0;
+}
+
+.detalle-datos dt {
+  color: var(--color-texto-suave);
+}
+
+.detalle-datos dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.detalle-form,
+.detalle-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--color-borde);
+  border-radius: 10px;
+  background: var(--color-fondo);
+}
+
+.detalle-campo {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.8rem;
+  color: var(--color-texto-suave);
+}
+
+.detalle-campo select,
+.detalle-campo input,
+.detalle-form textarea,
+.detalle-editor textarea {
+  width: 100%;
+  border: 1px solid var(--color-borde);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--color-texto);
+  background: var(--color-panel);
+}
+
+.detalle-form textarea,
+.detalle-editor textarea {
+  resize: vertical;
+}
+
+.detalle-aviso {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--color-texto-suave);
+}
+
+.detalle-error {
+  margin: 0;
+  min-height: 1em;
+  font-size: 0.8rem;
+  color: var(--color-cancelado);
+}
+
+.detalle-form button[type="submit"] {
+  align-self: flex-start;
+}
+
+.detalle-acciones {
+  display: flex;
+  gap: 8px;
+}
+
+.detalle-historial {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.detalle-historial li {
+  border: 1px solid var(--color-borde);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.detalle-nota-cabecera {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.75rem;
+  color: var(--color-texto-suave);
+}
+
+.detalle-editar-btn {
+  margin-left: auto;
+  padding: 3px 8px;
+  font-size: 0.75rem;
+}
+
+.detalle-nota-texto {
+  margin: 8px 0 4px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.detalle-nota-autor {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--color-texto-suave);
+}
+
 @media (max-width: 900px) {
   .admin-main {
     grid-template-columns: 1fr;

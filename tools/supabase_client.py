@@ -2,14 +2,8 @@
 tools/supabase_client.py
 
 Wrapper genérico y sin lógica de negocio sobre el REST de Supabase
-(PostgREST). Ni `citas_tools.py` ni `catalog_tools.py` deberían hablar con
-`requests` directamente para tocar Supabase — deben pasar por aquí.
-
-Esto reemplaza los helpers "privados" (`_supabase_headers`, `_supabase_url`)
-que antes vivían dentro de `calendar_tools.py` (renombrado a `citas_tools.py`
-al quitar Google Calendar, ver docstring de ese módulo) y que
-`catalog_tools.py` importaba por atrás — un módulo de catálogo dependiendo
-de internals de otro módulo, una violación de capas.
+(PostgREST). Ningún otro módulo debería hablar con `requests` directamente
+para tocar Supabase — deben pasar por aquí.
 
 Cada función de consulta/escritura devuelve datos de Python (dict/list),
 nunca texto ya formateado para el cliente — ese formateo final es
@@ -234,26 +228,6 @@ def delete_rows(tabla: str, params: dict) -> list:
     resp = requests.delete(url(tabla), headers=headers(), params=params, timeout=_timeout())
     resp.raise_for_status()
     return resp.json() if resp.content else []
-
-
-def es_violacion_de_solapamiento(exc: Exception) -> bool:
-    """True si `exc` es el error HTTP que devuelve PostgREST cuando una
-    escritura viola el constraint `no_solapamiento_citas_confirmadas` (ver
-    `supabase/migrations/20260927000002_disponibilidad_sin_calendar.sql`) — es decir, cuando se intenta
-    crear o mover una cita a un horario que ya choca con otra cita
-    confirmada. Verificado empíricamente contra la API REST real: PostgREST
-    devuelve **HTTP 400** (no 409) con `{"code": "23P01", ...}` en el cuerpo.
-
-    Se usa para traducir ese error técnico en un mensaje amable para el
-    cliente ("ese horario ya no está disponible") en vez de un error
-    genérico de "no se pudo guardar"."""
-    response = getattr(exc, "response", None)
-    if response is None or response.status_code != 400:
-        return False
-    try:
-        return response.json().get("code") == "23P01"
-    except ValueError:
-        return False
 
 
 # Columnas que NUNCA se le muestran al modelo, aunque vengan en la fila:

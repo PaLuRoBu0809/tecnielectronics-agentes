@@ -7,12 +7,11 @@ diccionario de modelos por agente: `ARGUMENTOS_POR_TOOL` (Servicio Técnico)
 y `ARGUMENTOS_VENTAS` (Ventas: ids UUID, cantidades >= 1, método de pago
 cerrado a "contra_entrega"/"en_linea").
 
-Qué valida aquí (forma de los datos) vs. en `tools/citas_tools.py` (reglas
-de negocio que necesitan el catálogo o la hora actual):
-- Aquí: campos obligatorios, fechas ISO 8601 parseables, fin > inicio,
-  teléfono con una cantidad razonable de dígitos, textos no vacíos.
-- En `citas_tools.validar_horario_cita`: horario operativo, días hábiles,
-  fechas futuras, duración según el catálogo.
+Qué valida aquí (forma de los datos) vs. en `tools/agenda_entregas.py`
+(reglas de calendario que necesitan la fecha actual y los festivos):
+- Aquí: campos obligatorios, fecha YYYY-MM-DD, hora HH:MM, teléfono con una
+  cantidad razonable de dígitos, textos no vacíos.
+- En `agenda_entregas`: días con atención, festivos, hora dentro del horario.
 
 Si la validación falla, la tool NO se ejecuta y el modelo recibe un texto
 "ERROR: argumentos inválidos para X: ..." en español, que puede leer y
@@ -22,39 +21,26 @@ de Python mostrado tal cual al modelo.
 `TOOLS_SCHEMA` (lo que ve el modelo) se sigue escribiendo a mano en cada
 agente y NO se genera desde estos modelos: así no cambia ni una coma de lo
 que el modelo lee. La coherencia la garantizan `verificar_coherencia_tools`
-y los tests de cada agente (`tests/test_validacion_tools.py`,
+y los tests de cada agente (`tests/test_ordenes_servicio.py`,
 `tests/test_ventas_tools.py`).
 """
 from __future__ import annotations
 
 import re
 import uuid
-from datetime import datetime
+from datetime import date, time
 from decimal import Decimal
 from typing import Callable, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from tools.citas_tools import zona_horaria_configurada
-
 
 class _ArgsBase(BaseModel):
     # extra="ignore": si el modelo agrega un campo que la tool no conoce, se
     #   descarta en vez de fallar (antes producía un TypeError).
-    # coerce_numbers_to_str: servicio_id llega a veces como número (3) y el
-    #   schema lo declara string ("3").
+    # coerce_numbers_to_str: un texto puede llegar como número (ej. el teléfono).
     # str_strip_whitespace: "  Juan " -> "Juan".
     model_config = ConfigDict(extra="ignore", coerce_numbers_to_str=True, str_strip_whitespace=True)
-
-
-def _fecha_iso(valor: Optional[str]) -> Optional[str]:
-    if valor is None:
-        return None
-    try:
-        datetime.fromisoformat(valor)
-    except ValueError as exc:
-        raise ValueError("debe ser una fecha y hora ISO 8601, ej. 2026-07-28T11:00:00-05:00") from exc
-    return valor
 
 
 def _no_vacio(valor: Optional[str]) -> Optional[str]:
@@ -76,96 +62,85 @@ def _telefono(valor: Optional[str]) -> Optional[str]:
     return valor
 
 
-def _a_datetime(valor: str) -> datetime:
-    """Una fecha sin offset se interpreta en la zona del negocio (igual que
-    `citas_tools.normalizar_fecha_hora`), para poder comparar una fecha con
-    offset contra otra sin él sin que Python lance TypeError."""
-    dt = datetime.fromisoformat(valor)
-    return dt if dt.tzinfo else dt.replace(tzinfo=zona_horaria_configurada())
+def _fecha(valor):
+    """'2026-10-08' -> date. Solo el formato; las reglas de calendario van en
+    `tools/agenda_entregas.py`."""
+    if valor is None or isinstance(valor, date):
+        return valor
+    try:
+        return date.fromisoformat(str(valor).strip()[:10])
+    except ValueError as exc:
+        raise ValueError("debe ser una fecha YYYY-MM-DD, ej. 2026-10-08") from exc
 
 
-def _fin_posterior(inicio: Optional[str], fin: Optional[str], nombres=("fecha_hora_inicio", "fecha_hora_fin")) -> None:
-    if inicio and fin and _a_datetime(fin) <= _a_datetime(inicio):
-        raise ValueError(f"{nombres[1]} debe ser posterior a {nombres[0]}")
+def _hora(valor):
+    """'9:30' o '14:00' (24 horas) -> time."""
+    if valor is None or isinstance(valor, time):
+        return valor
+    coincidencia = re.fullmatch(r"(\d{1,2}):(\d{2})(?::\d{2})?", str(valor).strip())
+    if not coincidencia or int(coincidencia[1]) > 23 or int(coincidencia[2]) > 59:
+        raise ValueError("debe ser una hora en formato 24 horas HH:MM, ej. 09:30 o 14:00")
+    return time(int(coincidencia[1]), int(coincidencia[2]))
 
 
 class ServicioTecnicoArgs(_ArgsBase):
     pass
 
 
-class ConsultarEventosArgs(_ArgsBase):
-    fecha_inicio: str
-    fecha_fin: str
-    servicio_id: str
-
-    v_fechas = field_validator("fecha_inicio", "fecha_fin")(_fecha_iso)
-    v_servicio = field_validator("servicio_id")(_no_vacio)
-
-    @model_validator(mode="after")
-    def _rango(self):
-        _fin_posterior(self.fecha_inicio, self.fecha_fin, ("fecha_inicio", "fecha_fin"))
-        return self
-
-
-class CrearEventoArgs(_ArgsBase):
-    servicio_id: str
+class CrearOrdenServicioArgs(_ArgsBase):
+    servicio_id: int = Field(ge=1)
     cliente_nombre: str
     cliente_telefono: str
+    equipo: str
     descripcion: str
-    fecha_hora_inicio: str
-    fecha_hora_fin: str
+    fecha_entrega: date
+    hora_aproximada: Optional[time] = None
 
-    v_textos = field_validator("servicio_id", "cliente_nombre", "descripcion")(_no_vacio)
+    v_textos = field_validator("cliente_nombre", "equipo", "descripcion")(_no_vacio)
     v_telefono = field_validator("cliente_telefono")(_telefono)
-    v_fechas = field_validator("fecha_hora_inicio", "fecha_hora_fin")(_fecha_iso)
-
-    @model_validator(mode="after")
-    def _orden(self):
-        _fin_posterior(self.fecha_hora_inicio, self.fecha_hora_fin)
-        return self
+    v_fecha = field_validator("fecha_entrega", mode="before")(_fecha)
+    v_hora = field_validator("hora_aproximada", mode="before")(_hora)
 
 
-class ActualizarEventoArgs(_ArgsBase):
-    google_calendar_event_id: str
-    fecha_hora_inicio: Optional[str] = None
-    fecha_hora_fin: Optional[str] = None
+class ConsultarOrdenesServicioArgs(_ArgsBase):
+    numero: Optional[int] = Field(default=None, ge=1)
+
+
+class ModificarOrdenServicioArgs(_ArgsBase):
+    numero: int = Field(ge=1)
+    fecha_entrega: Optional[date] = None
+    hora_aproximada: Optional[time] = None
     cliente_nombre: Optional[str] = None
     cliente_telefono: Optional[str] = None
+    equipo: Optional[str] = None
     descripcion: Optional[str] = None
-    servicio_id: Optional[str] = None
+    servicio_id: Optional[int] = Field(default=None, ge=1)
 
-    v_textos = field_validator("google_calendar_event_id", "cliente_nombre", "servicio_id")(_no_vacio)
+    v_textos = field_validator("cliente_nombre", "equipo", "descripcion")(_no_vacio)
     v_telefono = field_validator("cliente_telefono")(_telefono)
-    v_fechas = field_validator("fecha_hora_inicio", "fecha_hora_fin")(_fecha_iso)
+    v_fecha = field_validator("fecha_entrega", mode="before")(_fecha)
+    v_hora = field_validator("hora_aproximada", mode="before")(_hora)
 
     @model_validator(mode="after")
-    def _fechas_juntas(self):
-        # El prompt exige enviar SIEMPRE inicio y fin completos cuando cambia
-        # la fecha/hora (FASE 3, "Ejecución"); uno solo es un error del modelo.
-        if bool(self.fecha_hora_inicio) != bool(self.fecha_hora_fin):
-            raise ValueError("si cambia la fecha/hora, envía fecha_hora_inicio y fecha_hora_fin juntos")
-        _fin_posterior(self.fecha_hora_inicio, self.fecha_hora_fin)
+    def _algun_cambio(self):
+        campos = (self.fecha_entrega, self.hora_aproximada, self.cliente_nombre, self.cliente_telefono,
+                  self.equipo, self.descripcion, self.servicio_id)
+        if all(c is None for c in campos):
+            raise ValueError("envía al menos un dato que el cliente quiera cambiar")
         return self
 
 
-class EliminarEventoArgs(_ArgsBase):
-    google_calendar_event_id: str
-
-    v_id = field_validator("google_calendar_event_id")(_no_vacio)
-
-
-class ConsultarServicioAgendadoArgs(_ArgsBase):
-    pass
+class CancelarOrdenServicioArgs(_ArgsBase):
+    numero: int = Field(ge=1)
 
 
 # Nombre de la tool (exactamente como en TOOLS_SCHEMA) -> modelo de argumentos.
 ARGUMENTOS_POR_TOOL: dict = {
     "Servicio_tecnico": ServicioTecnicoArgs,
-    "Consultar_eventos": ConsultarEventosArgs,
-    "Crear_evento": CrearEventoArgs,
-    "Actualizar_evento": ActualizarEventoArgs,
-    "Eliminar_evento": EliminarEventoArgs,
-    "Consultar_servicio_agendado": ConsultarServicioAgendadoArgs,
+    "Crear_orden_servicio": CrearOrdenServicioArgs,
+    "Consultar_ordenes_servicio": ConsultarOrdenesServicioArgs,
+    "Modificar_orden_servicio": ModificarOrdenServicioArgs,
+    "Cancelar_orden_servicio": CancelarOrdenServicioArgs,
 }
 
 

@@ -62,23 +62,28 @@ print("✅ La ventana envía los últimos N turnos, empieza en un mensaje del cl
 # 2) Ficha: construida SOLO desde argumentos de tools; el valor más reciente gana.
 # ---------------------------------------------------------------------------
 viejos = (
-    _turno(1, "Consultar_eventos", {"servicio_id": 3, "fecha_inicio": "x", "fecha_fin": "y"})
-    + _turno(2, "Crear_evento", {"cliente_nombre": "Ana Pérez", "cliente_telefono": "3001112222",
-                                 "servicio_id": "3", "descripcion": "No prende",
-                                 "fecha_hora_inicio": "x", "fecha_hora_fin": "y"})
-    + _turno(3, "Actualizar_evento", {"google_calendar_event_id": "abc", "cliente_telefono": "3009998888"})
+    _turno(1, "Servicio_tecnico", {})
+    + _turno(2, "Crear_orden_servicio", {"cliente_nombre": "Ana Pérez", "cliente_telefono": "3001112222",
+                                         "servicio_id": 3, "equipo": "Portátil HP", "descripcion": "No prende",
+                                         "fecha_entrega": "2026-10-09"})
+    + _turno(3, "Modificar_orden_servicio", {"numero": 25, "cliente_telefono": "3009998888",
+                                             "fecha_entrega": "2026-10-10"})
 )
 ficha = construir_ficha(viejos, servicio_tecnico_agent.CAMPOS_FICHA)
 assert ficha == {"servicio_id": "3", "cliente_nombre": "Ana Pérez", "cliente_telefono": "3009998888",
-                 "descripcion": "No prende"}, ficha
-assert "abc" not in nota_ficha(ficha), "La ficha nunca incluye el Event ID (el prompt prohíbe reutilizarlo)"
+                 "equipo": "Portátil HP", "descripcion": "No prende"}, ficha
+assert "2026-10-10" not in nota_ficha(ficha), "La ficha no guarda el día: el estado de la orden siempre se consulta"
 assert nota_ficha({}) == "", "Sin datos no se agrega ninguna nota al prompt"
-print("✅ La ficha sale de los argumentos de tools, gana el dato más reciente y nunca incluye el Event ID.")
+print("✅ La ficha sale de los argumentos de tools, gana el dato más reciente y no guarda datos que cambian.")
 
 # ---------------------------------------------------------------------------
 # 3) El sub-agente: ventana al modelo, ficha solo si hubo descarte, y
 #    devuelve el historial COMPLETO.
 # ---------------------------------------------------------------------------
+from tools import info_empresa  # noqa: E402
+
+# Sin red: los datos de la sede vienen de Supabase.
+patch.object(info_empresa, "nota_temas", return_value="").start()
 largo = viejos + sum((_turno(i) for i in range(10, 25)), [])
 with patch.object(servicio_tecnico_agent, "run_agent_loop", side_effect=lambda **kw: ("ok", kw["messages"] + [
         {"role": "assistant", "content": "ok"}])) as loop_mock:
@@ -104,9 +109,9 @@ print("✅ El sub-agente envía la ventana, agrega la ficha solo en conversacion
 # ---------------------------------------------------------------------------
 catalogo_largo = "servicio " * 400  # ~3600 caracteres
 guardado = (
-    _turno(1, "Consultar_eventos", {}, resultado="ocupado " * 400)  # antiguo y largo -> se recorta
+    _turno(1, "Consultar_ordenes_servicio", {}, resultado="orden " * 400)  # antiguo y largo -> se recorta
     + _turno(2, "Servicio_tecnico", {}, resultado=catalogo_largo)  # el ÚNICO catálogo -> se conserva
-    + _turno(3, "Consultar_eventos", {}, resultado="ocupado " * 400)  # último de su tool -> se conserva
+    + _turno(3, "Consultar_ordenes_servicio", {}, resultado="ocupado " * 400)  # último de su tool -> se conserva
     + sum((_turno(i) for i in range(4, 10)), [])
 )
 limitado = limitar_historial_guardado(guardado, turnos_intactos=4, max_caracteres_tool=1500, max_mensajes=300)

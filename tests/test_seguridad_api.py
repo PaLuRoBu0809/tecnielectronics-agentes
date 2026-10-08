@@ -32,13 +32,13 @@ CABECERA_OK = {"X-API-Key": "clave-de-prueba"}
 # ---------------------------------------------------------------------------
 # 1) Sin clave o con clave incorrecta -> 401, en todas las rutas del API.
 # ---------------------------------------------------------------------------
-with patch.object(modulo_app.tecnicos_repository, "listar_tecnicos", return_value=[]):
-    assert cliente.get("/api/tecnicos").status_code == 401, "Sin clave debe responder 401"
-    assert cliente.get("/api/tecnicos", headers={"X-API-Key": "otra"}).status_code == 401
-    assert cliente.get("/api/tecnicos", headers=CABECERA_OK).status_code == 200
+with patch.object(modulo_app.catalog_tools, "listar_catalogo", return_value=[]):
+    assert cliente.get("/api/catalogo").status_code == 401, "Sin clave debe responder 401"
+    assert cliente.get("/api/catalogo", headers={"X-API-Key": "otra"}).status_code == 401
+    assert cliente.get("/api/catalogo", headers=CABECERA_OK).status_code == 200
     # La clave en la URL ya NO se acepta: uvicorn escribe las URLs completas
     # en su log de accesos, así que la clave quedaría registrada.
-    assert cliente.get("/api/tecnicos?api_key=clave-de-prueba").status_code == 401
+    assert cliente.get("/api/catalogo?api_key=clave-de-prueba").status_code == 401
 assert cliente.post("/api/chat", json={"session_id": "1", "mensaje": "hola"}).status_code == 401
 pedido = {"order_number": 36, "customer_name": "Ana", "shipping_status": "CANCELADO"}
 with patch.object(modulo_app.ordenes_repository, "listar_todas", return_value=[pedido]):
@@ -61,10 +61,10 @@ set_cookie = abrir.headers["set-cookie"]
 for atributo in ("HttpOnly", "SameSite=strict", "Secure", "Path=/api"):
     assert atributo.lower() in set_cookie.lower(), f"La cookie debe llevar {atributo}: {set_cookie}"
 assert "clave-de-prueba" not in set_cookie, "La cookie NO debe contener la clave"
-with patch.object(modulo_app.tecnicos_repository, "listar_tecnicos", return_value=[]):
-    assert navegador.get("/api/tecnicos").status_code == 200, "Con la cookie, no hace falta la cabecera"
+with patch.object(modulo_app.catalog_tools, "listar_catalogo", return_value=[]):
+    assert navegador.get("/api/catalogo").status_code == 200, "Con la cookie, no hace falta la cabecera"
     navegador.delete("/api/panel/sesion")
-    assert navegador.get("/api/tecnicos").status_code == 401, "Tras cerrar la sesión, vuelve a pedir la clave"
+    assert navegador.get("/api/catalogo").status_code == 401, "Tras cerrar la sesión, vuelve a pedir la clave"
 print("✅ La sesión del panel usa una cookie HttpOnly/Secure/SameSite con un token, sin la clave.")
 
 token = seguridad.crear_token_sesion(ahora=1000)
@@ -130,6 +130,40 @@ print("✅ El límite de mensajes por sesión responde 429 antes de gastar llama
 largo = cliente.post("/api/chat", json={"session_id": "x", "mensaje": "a" * 2001}, headers=CABECERA_OK)
 assert largo.status_code == 422, "Un mensaje de más de 2000 caracteres debe rechazarse"
 print("✅ Mensajes y session_id tienen longitud máxima.")
+
+# ---------------------------------------------------------------------------
+# 2b) Fase 13: estado + notas desde el panel. Nota y responsable obligatorios;
+#     las reglas de Postgres llegan como 404/409 con un mensaje legible.
+# ---------------------------------------------------------------------------
+from tools import ordenes_servicio_repository  # noqa: E402
+from tools.errores_negocio import ErrorNegocio  # noqa: E402
+
+cambio = {"estado": "RECIBIDO", "nota": "  Llegó con cargador ", "responsable": "Laura"}
+assert cliente.post("/api/ordenes-servicio/25/estado", json=cambio).status_code == 401, "El panel exige la clave"
+with patch.object(ordenes_servicio_repository, "cambiar_estado", return_value={"numero": 25}) as cambiar_mock:
+    assert cliente.post("/api/ordenes-servicio/25/estado", json=cambio, headers=CABECERA_OK).status_code == 200
+    for invalido in ({**cambio, "nota": "   "}, {**cambio, "responsable": ""}, {**cambio, "estado": "PERDIDO"},
+                     {k: v for k, v in cambio.items() if k != "responsable"}):
+        r = cliente.post("/api/ordenes-servicio/25/estado", json=invalido, headers=CABECERA_OK)
+        assert r.status_code == 422, (invalido, r.status_code)
+cambiar_mock.assert_called_once_with(25, "RECIBIDO", "Llegó con cargador", "Laura")
+
+no_existe = ErrorNegocio("ORDEN_SERVICIO_NO_ENCONTRADA")
+with patch.object(ordenes_servicio_repository, "agregar_nota", side_effect=no_existe):
+    r = cliente.post("/api/ordenes-servicio/99/notas", json={"nota": "x", "responsable": "Laura"}, headers=CABECERA_OK)
+assert r.status_code == 404 and "no existe" in r.json()["detail"], r.text
+with patch.object(modulo_app.ordenes_repository, "cambiar_estado_envio", side_effect=ErrorNegocio("MISMO_ESTADO")):
+    r = cliente.post("/api/pedidos/36/estado", json={**cambio, "estado": "DESPACHADO"}, headers=CABECERA_OK)
+assert r.status_code == 409 and "Agregar nota" in r.json()["detail"], r.text
+with patch.object(modulo_app.ordenes_repository, "editar_nota", return_value={"id": 7}) as editar_mock:
+    r = cliente.patch("/api/pedidos/notas/7", json={"nota": "Guía 123", "responsable": "Pedro"}, headers=CABECERA_OK)
+assert r.status_code == 200 and editar_mock.call_args.args == (7, "Guía 123", "Pedro")
+with patch.object(ordenes_servicio_repository, "listar_todas", return_value=[]) as listar_mock:
+    assert cliente.get("/api/ordenes-servicio?desde=2026-10-01&hasta=2026-10-31", headers=CABECERA_OK).status_code \
+        == 200
+    assert cliente.get("/api/ordenes-servicio?desde=ayer", headers=CABECERA_OK).status_code == 422
+listar_mock.assert_called_once_with("2026-10-01", "2026-10-31")
+print("✅ Panel: estado y notas exigen clave, nota y responsable; las reglas de negocio responden 404/409 legibles.")
 
 # ---------------------------------------------------------------------------
 # 3) LimitadorDeUso con reloj simulado: la ventana es deslizante.

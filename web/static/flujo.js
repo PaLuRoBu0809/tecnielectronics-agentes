@@ -49,11 +49,10 @@ function columnaDeTools(tools, yInicial) {
 const TOOLS_POR_AGENTE = {
   servicio_tecnico: [
     ["tool_catalogo", "Servicio_tecnico"],
-    ["tool_consultar_eventos", "Consultar_eventos"],
-    ["tool_crear_evento", "Crear_evento"],
-    ["tool_actualizar_evento", "Actualizar_evento"],
-    ["tool_eliminar_evento", "Eliminar_evento"],
-    ["tool_consultar_cita", "Consultar_servicio_agendado"],
+    ["tool_crear_orden_servicio", "Crear_orden_servicio"],
+    ["tool_consultar_ordenes_servicio", "Consultar_ordenes_servicio"],
+    ["tool_modificar_orden_servicio", "Modificar_orden_servicio"],
+    ["tool_cancelar_orden_servicio", "Cancelar_orden_servicio"],
   ],
   ventas: [
     ["tool_categorias", "Categorias_inventario"],

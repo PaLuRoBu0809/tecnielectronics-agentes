@@ -9,15 +9,27 @@ ni de conectar esto a n8n.
 > (seguridad, resiliencia del LLM, presupuesto de turno, validación, etc.), con
 > el registro detallado de cada cambio. Algunas secciones de este README
 > describen el estado anterior a esas mejoras; el plan manda cuando difieren.
-> Tests: `python tests/correr_todos.py`. Para agregar `Agente_Ventas`, ver la
-> guía al final de ese documento.
+> Tests: `python tests/correr_todos.py`.
+>
+> **Fase 13 (2026-10-08): Servicio Técnico ya no agenda citas por hora.** El
+> cliente agenda el DÍA en que trae su equipo a la sede (+ hora aproximada),
+> puede cambiarlo o cancelar mientras no lo haya traído, y consulta el estado
+> que la empresa actualiza desde el dashboard (estado + notas con
+> responsable obligatorio; lo mismo para los pedidos de Ventas). Las
+> secciones de este README sobre citas, `Consultar_eventos`, técnicos y el
+> constraint anti-choque describen el modelo anterior: su código se retiró
+> (respaldo en la rama `respaldo-modelo-citas-por-hora`) y las tablas
+> `servicios_agendados`/`tecnicos` quedan solo como historial. Detalle en la
+> Fase 13 del plan.
 
 ## Qué SÍ está implementado
 
 - El loop genérico de tool use (`llm_loop.py`), con fallback entre varios
   modelos `:free` de OpenRouter.
-- El Agente de Servicio Técnico completo (`agents/servicio_tecnico_agent.py`),
-  con las 6 tools de sus 4 flujos (agendar, modificar, cancelar, consultar estado).
+- El Agente de Servicio Técnico (`agents/servicio_tecnico_agent.py`), con 5
+  tools para sus 4 flujos: registrar la orden de servicio con el día de
+  entrega del equipo, cambiar el día o cancelar (solo antes de traerlo) y
+  consultar el estado y las novedades (`tools/ordenes_servicio_tools.py`).
 - El Orquestador (`agents/orquestador.py`), enrutando por tool use nativo — el
   modelo decide si invoca `Agente_Servicio_Tecnico`, no un if/else escrito a mano.
 - Las 4 herramientas de citas (`tools/citas_tools.py`), sobre una capa de
@@ -448,21 +460,24 @@ disponible de la misma forma para todos los modelos.
 ├── main.py                      # arnés de pruebas por consola
 ├── agents/
 │   ├── orquestador.py           # Orquestador + registro de sub-agentes (SUBAGENTES)
-│   └── servicio_tecnico_agent.py# Agente de Servicio Técnico (+ notas, ficha de contexto)
+│   ├── servicio_tecnico_agent.py# Agente de Servicio Técnico (órdenes por día de entrega)
+│   └── ventas_agent.py          # Agente de Ventas
 ├── tools/
 │   ├── supabase_client.py       # wrapper del REST de Supabase (timeouts, reintentos de lectura)
-│   ├── citas_repository.py      # acceso a la tabla de citas
-│   ├── citas_tools.py           # Consultar/Crear/Actualizar/Eliminar_evento (reglas de agenda, confirmación)
-│   ├── catalog_tools.py         # Servicio_tecnico, Consultar_servicio_agendado, leer_servicio
+│   ├── ordenes_servicio_repository.py # órdenes de servicio + seguimiento (RPC de Postgres)
+│   ├── ordenes_servicio_tools.py# Crear/Consultar/Modificar/Cancelar_orden_servicio
+│   ├── agenda_entregas.py       # horario de la sede, festivos y validación del día de entrega
+│   ├── formato_servicio.py      # texto de las órdenes de servicio para el modelo
+│   ├── fechas.py                # zona horaria y fechas en español
+│   ├── catalog_tools.py         # Servicio_tecnico, listar_catalogo, leer_servicio
 │   ├── validacion_tools.py      # modelos Pydantic de argumentos + verificación de coherencia
-│   ├── tecnicos_repository.py   # técnicos (solo dashboard)
 │   ├── eventos_agente.py        # bus de eventos + logs JSON con PII enmascarada
 │   └── metricas.py              # contadores y alertas
 ├── web/
 │   ├── app.py                   # FastAPI: /api/* (con clave), /health, /ready, estáticos
 │   ├── seguridad.py             # API key y límite de mensajes por sesión
-│   └── static/                  # dashboard (index.html, api.js, chat/admin/flujo/dashboard .js/.css)
-├── supabase/migrations/         # migraciones en formato Supabase CLI (001–005)
+│   └── static/                  # dashboard (index.html, api.js, seguimiento.js, chat/admin/ventas/flujo .js/.css)
+├── supabase/migrations/         # migraciones en formato Supabase CLI (001–014)
 ├── tests/                       # scripts de prueba + correr_todos.py + pytest_suite.py
 ├── docs/PLAN_DE_MEJORAS.md      # plan, registro de cambios y guía para agregar Ventas
 ├── Dockerfile, .dockerignore

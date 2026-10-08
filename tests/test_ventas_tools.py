@@ -269,6 +269,12 @@ print("✅ Pago en línea: link primero, orden después con la misma referencia 
 # ---------------------------------------------------------------------------
 # 6) Consultar orden.
 # ---------------------------------------------------------------------------
+# Sin red: el seguimiento y los datos de la sede vienen de Supabase.
+from tools import info_empresa  # noqa: E402
+
+patch.object(ordenes_repository, "seguimiento", return_value={}).start()
+patch.object(info_empresa, "nota_temas", return_value="").start()
+
 with patch.object(ordenes_repository, "listar", return_value=[]) as listar_mock:
     assert tools()["Consultar_orden"]().startswith("SIN_PEDIDOS")
 assert listar_mock.call_args.args == (SESION,), "Sin número: solo los no cancelados"
@@ -286,6 +292,22 @@ with patch.object(ordenes_repository, "leer", return_value=orden_en_linea):
 assert "ESTADO DE PAGO: PENDIENTE" in r and "Link de pago: https://mp/1" in r
 assert "ref-secreta" not in r and "payment_reference" not in r
 print("✅ Consultar orden: activos, listado completo si el número no existe, estado de pago y sin datos internos.")
+
+# Fase 13: las notas que la empresa escribe en el dashboard llegan al agente
+# (las 3 más recientes), sin el nombre de quien las escribió.
+notas = [{"creado_en": f"2026-10-0{d}T15:00:00+00:00", "estado": "DESPACHADO", "nota": f"Nota {d}",
+          "responsable": "Laura"} for d in range(1, 5)]
+with (
+    patch.object(ordenes_repository, "leer", return_value={**ORDEN, "shipping_status": "DESPACHADO"}),
+    patch.object(ordenes_repository, "seguimiento", return_value={101: notas}),
+):
+    r = tools()["Consultar_orden"](order_number=101)
+assert "NOVEDADES DEL ENVÍO" in r and "Nota 4" in r and "Nota 2" in r and "Nota 1" not in r, r
+assert "Laura" not in r, "El responsable es un dato interno"
+with patch.object(ordenes_repository, "leer", return_value=ORDEN), \
+        patch.object(ordenes_repository, "seguimiento", side_effect=ConnectionError("caído")):
+    assert "Pedido #101" in tools()["Consultar_orden"](order_number=101), "Sin seguimiento, responde igual"
+print("✅ Consultar orden: muestra las novedades del dashboard (sin el responsable) y no falla si no se pueden leer.")
 
 # ---------------------------------------------------------------------------
 # 7) Modificar y cancelar: la regla se verifica antes de pedir confirmación.
