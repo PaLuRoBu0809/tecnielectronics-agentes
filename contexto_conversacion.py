@@ -154,6 +154,7 @@ _ETIQUETAS = {
     "cliente_telefono": "Teléfono de contacto",
     "servicio_id": "servicio_id del servicio identificado",
     "descripcion": "Descripción del problema",
+    "equipo": "Equipo del cliente",
     "customer_name": "Nombre completo del cliente",
     "customer_phone": "Teléfono del cliente",
     "customer_address": "Dirección de entrega",
@@ -162,13 +163,13 @@ _ETIQUETAS = {
 }
 
 # Lo que la ficha NO reemplaza: el estado real siempre se vuelve a consultar.
-RECORDATORIO_CITAS = (
-    "Para cualquier cita existente, consulta siempre {Consultar_servicio_agendado}: esta nota no reemplaza "
-    "esa consulta."
+RECORDATORIO_GENERICO = (
+    "El estado actual de pedidos u órdenes siempre se vuelve a consultar con las herramientas: esta nota no "
+    "reemplaza esa consulta."
 )
 
 
-def nota_ficha(ficha: dict, recordatorio: str = RECORDATORIO_CITAS) -> str:
+def nota_ficha(ficha: dict, recordatorio: str = RECORDATORIO_GENERICO) -> str:
     """Nota para agregar al system prompt. Vacía si no hay ficha.
     `recordatorio`: qué debe volver a consultar SIEMPRE ese agente (la ficha
     son datos que dio el cliente, nunca el estado actual de nada)."""

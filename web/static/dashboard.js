@@ -1,5 +1,5 @@
 /**
- * dashboard.js — cambia qué pestaña del dashboard está visible (Citas /
+ * dashboard.js — cambia qué pestaña del dashboard está visible (Servicio técnico /
  * Ventas / Chat prueba / Flujo en vivo).
  *
  * Las 4 vistas YA están en el DOM desde que carga la página (ver
@@ -35,10 +35,13 @@ for (const boton of botones) {
   boton.addEventListener("click", () => activarVista(boton.dataset.tab));
 }
 
-let vistaInicial = "citas";
+let vistaInicial = "servicio";
 try {
-  vistaInicial = localStorage.getItem(CLAVE_VISTA_ACTIVA) || "citas";
+  vistaInicial = localStorage.getItem(CLAVE_VISTA_ACTIVA) || "servicio";
 } catch {
-  // Sin acceso a localStorage: se usa la pestaña por defecto (Citas).
+  // Sin acceso a localStorage: se usa la pestaña por defecto (Servicio técnico).
 }
+// Una pestaña guardada que ya no existe (ej. "citas", renombrada a
+// "servicio" en la Fase 13) cae en la pestaña por defecto.
+if (![...vistas].some((vista) => vista.dataset.vista === vistaInicial)) vistaInicial = "servicio";
 activarVista(vistaInicial);

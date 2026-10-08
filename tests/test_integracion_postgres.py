@@ -199,6 +199,105 @@ def _probar_info_empresa(conn, migraciones) -> None:
     print("✅ 011 y 012: info_empresa con 11 temas (horario e historia), valida datos y no pisa ediciones.")
 
 
+def _crear_orden_servicio(sesion, dias="1"):
+    return (
+        f"select numero from crear_orden_servicio('{sesion}', 'Ana Pérez', '3001112222', 1, 'Portátil Lenovo', "
+        f"'No enciende', hoy_colombia() + {dias}, '09:30')"
+    )
+
+
+def _probar_ordenes_servicio(conn) -> None:
+    """Migración 013: órdenes de servicio por día + seguimiento con nota y responsable."""
+    _debe_fallar_con(conn, _crear_orden_servicio("s1", dias="-1"), "FECHA_PASADA", "No se agenda en el pasado")
+    _debe_fallar_con(
+        conn,
+        "select crear_orden_servicio('s1', 'Ana', '300', 999, 'PC', 'x', hoy_colombia() + 1)",
+        "SERVICIO_NO_EXISTE", "El servicio debe existir en el catálogo",
+    )
+    numero = conn.execute(_crear_orden_servicio("s1")).fetchone()[0]
+    estado, hora = conn.execute(
+        f"select estado::text, to_char(hora_aproximada, 'HH24:MI') from ordenes_servicio where numero = {numero}"
+    ).fetchone()
+    assert (estado, hora) == ("PENDIENTE_RECEPCION", "09:30"), (estado, hora)
+    notas = conn.execute(f"select responsable from seguimiento_orden_servicio where numero = {numero}").fetchall()
+    assert notas == [("Asistente virtual",)], "Crear deja la primera nota del seguimiento"
+
+    _debe_fallar_con(conn, f"select modificar_orden_servicio({numero}, 'otro', hoy_colombia() + 2)",
+                     "ORDEN_SERVICIO_NO_ENCONTRADA", "Un cliente no modifica la orden de otro")
+    conn.execute(f"select modificar_orden_servicio({numero}, 's1', hoy_colombia() + 3, p_equipo => 'Portátil HP')")
+    nota = conn.execute(
+        f"select nota from seguimiento_orden_servicio where numero = {numero} order by id desc limit 1"
+    ).fetchone()[0]
+    assert "día de entrega" in nota and "equipo Portátil Lenovo -> Portátil HP" in nota, nota
+    assert "hora aproximada" not in nota, "Solo se anota lo que cambió"
+
+    # --- Dashboard ---
+    _debe_fallar_con(conn, f"select cambiar_estado_orden_servicio({numero}, 'RECIBIDO', '  ', 'Laura')",
+                     "NOTA_REQUERIDA", "Cambiar el estado exige una nota")
+    _debe_fallar_con(conn, f"select cambiar_estado_orden_servicio({numero}, 'RECIBIDO', 'Llegó', '')",
+                     "RESPONSABLE_REQUERIDO", "Cambiar el estado exige el responsable")
+    _debe_fallar_con(conn, f"select cambiar_estado_orden_servicio({numero}, 'PENDIENTE_RECEPCION', 'x', 'Laura')",
+                     "MISMO_ESTADO", "Cambiar al mismo estado no tiene sentido (para eso está Agregar nota)")
+    conn.execute(f"select cambiar_estado_orden_servicio({numero}, 'RECIBIDO', 'Llegó con cargador', 'Laura')")
+    _debe_fallar_con(conn, f"select modificar_orden_servicio({numero}, 's1', hoy_colombia() + 4)",
+                     "ORDEN_SERVICIO_NO_MODIFICABLE", "Recibido el equipo, el cliente ya no cambia el día")
+    _debe_fallar_con(conn, f"select cancelar_orden_servicio({numero}, 's1')",
+                     "ORDEN_SERVICIO_NO_MODIFICABLE", "Recibido el equipo, el cliente ya no cancela por el chat")
+    id_nota = conn.execute(f"select (agregar_nota_orden_servicio({numero}, 'Falla en la fuente', 'Pedro')).id"
+                           ).fetchone()[0]
+    conn.execute(f"select editar_nota_orden_servicio({id_nota}, 'Falla en la fuente de poder', 'Laura')")
+    fila = conn.execute(
+        f"select estado::text, nota, responsable, editado_por, editado_en is not null "
+        f"from seguimiento_orden_servicio where id = {id_nota}"
+    ).fetchone()
+    assert fila == ("RECIBIDO", "Falla en la fuente de poder", "Pedro", "Laura", True), fila
+    _debe_fallar_con(conn, "select editar_nota_orden_servicio(999999, 'x', 'y')", "NOTA_NO_ENCONTRADA",
+                     "Editar una nota inexistente falla")
+
+    otra = conn.execute(_crear_orden_servicio("s1")).fetchone()[0]
+    conn.execute(f"select cancelar_orden_servicio({otra}, 's1')")
+    assert conn.execute(f"select estado::text from ordenes_servicio where numero = {otra}").fetchone()[0] == \
+        "CANCELADO"
+    _debe_fallar(conn, "insert into seguimiento_orden_servicio (numero, estado, nota, responsable) "
+                       f"values ({otra}, 'CANCELADO', 'x', ' ')",
+                 errors.CheckViolation, "Ni por fuera de las funciones se guarda una nota sin responsable")
+    print("✅ 013: órdenes de servicio por día; el cliente cambia o cancela solo las suyas y antes de llevar el "
+          "equipo; el dashboard exige nota y responsable; las notas se editan dejando quién lo hizo.")
+
+
+def _probar_seguimiento_pedidos(conn) -> None:
+    """Migración 014: estado de envío con nota y responsable, y el trigger de seguimiento."""
+    conn.execute(f"select agregar_al_carrito('p1', '{MOUSE}', 2)")
+    pedido = conn.execute(_crear_orden("p1")).fetchone()[0]
+    stock = _stock(conn, MOUSE)
+
+    _debe_fallar_con(conn, f"select cambiar_estado_pedido({pedido}, 'DESPACHADO', '', 'Laura')",
+                     "NOTA_REQUERIDA", "Cambiar el estado del pedido exige una nota")
+    conn.execute(f"select cambiar_estado_pedido({pedido}, 'DESPACHADO', 'Guía Servientrega 123', 'Laura')")
+    conn.execute(f"select agregar_nota_pedido({pedido}, 'Llega el viernes', 'Laura')")
+    conn.execute(f"select cambiar_estado_pedido({pedido}, 'CANCELADO', 'Devuelto por la transportadora', 'Pedro')")
+    assert _stock(conn, MOUSE) == stock + 2, "Cancelar desde el dashboard devuelve el stock reservado"
+    _debe_fallar_con(conn, f"select cambiar_estado_pedido({pedido}, 'DESPACHADO', 'x', 'Pedro')",
+                     "PEDIDO_CANCELADO", "Un pedido cancelado no se reactiva")
+    historial = conn.execute(
+        f"select estado::text, nota, responsable from seguimiento_pedido where order_number = {pedido} order by id"
+    ).fetchall()
+    assert historial == [
+        ("DESPACHADO", "Guía Servientrega 123", "Laura"),
+        ("DESPACHADO", "Llega el viernes", "Laura"),
+        ("CANCELADO", "Devuelto por la transportadora", "Pedro"),
+    ], historial
+
+    # Cambios que no vienen del dashboard también quedan, con nota del sistema.
+    conn.execute(f"select agregar_al_carrito('p2', '{MOUSE}', 1)")
+    otro = conn.execute(_crear_orden("p2")).fetchone()[0]
+    conn.execute(f"select cancelar_orden({otro}, 'p2')")
+    assert conn.execute(f"select nota, responsable from seguimiento_pedido where order_number = {otro}").fetchall() \
+        == [("Cancelado por el cliente desde el chat.", "Sistema")]
+    print("✅ 014: pedidos con estado + nota + responsable desde el dashboard; cancelar devuelve el stock y los "
+          "cambios del cliente quedan también en el seguimiento.")
+
+
 def _probar_ventas(conn) -> None:
     # --- Normalización de los datos de n8n ---
     filas = dict(
@@ -451,6 +550,8 @@ def probar(url: str) -> None:
 
         _probar_ventas(conn)
         _probar_info_empresa(conn, MIGRACIONES)
+        _probar_ordenes_servicio(conn)
+        _probar_seguimiento_pedidos(conn)
 
 
 if __name__ == "__main__":

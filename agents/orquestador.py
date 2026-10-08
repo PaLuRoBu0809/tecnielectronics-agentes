@@ -25,7 +25,7 @@ from typing import Callable, Optional
 from contexto_conversacion import aplicar_ventana
 from llm_loop import PresupuestoTurno, run_agent_loop
 from agents import servicio_tecnico_agent, ventas_agent
-from tools import eventos_agente, info_empresa
+from tools import eventos_agente, info_empresa, ordenes_servicio_tools
 
 logger = logging.getLogger(__name__)
 
@@ -366,16 +366,16 @@ SUBAGENTES = (
         clave_historial="servicio_tecnico",
         descripcion=(
             "Subagente especializado en servicio técnico: identificación de problemas, "
-            "catálogo de servicios, agendamiento/modificación/cancelación de citas técnicas. "
+            "catálogo de servicios, órdenes de servicio (el día en que el cliente trae su equipo a "
+            "la sede, cambios y cancelaciones) y estado de los equipos en reparación. "
             "Invócalo con el mensaje del cliente en texto plano; devuelve una respuesta ya "
             "redactada en texto plano, lista para reenviar tal cual."
         ),
         # Referencia perezosa: se resuelve en cada llamada, así los tests
         # pueden reemplazar `servicio_tecnico_agent.run`.
         ejecutar=lambda **kwargs: servicio_tecnico_agent.run(**kwargs),
-        # Crear_evento solo empieza con "Inicio:" cuando la cita quedó agendada.
-        tool_de_cierre="Crear_evento",
-        prefijo_de_exito="Inicio:",
+        tool_de_cierre="Crear_orden_servicio",
+        prefijo_de_exito=ordenes_servicio_tools.PREFIJO_EXITO_CREAR,
         venta_cruzada="Y si necesitas repuestos, accesorios o un equipo nuevo, también te ayudo con la compra. 🛒",
     ),
     SubAgente(
@@ -495,7 +495,7 @@ def run(
     """
     historiales = dict(historiales or {})
     # El run_id identifica el turno también para la salvaguarda de
-    # confirmación (`tools/citas_tools.py`): se genera aquí si no viene
+    # confirmación (`tools/confirmacion.py`): se genera aquí si no viene
     # (consola `main.py`), para que cada mensaje sea un turno distinto.
     run_id = run_id or uuid.uuid4().hex
     presupuesto = PresupuestoTurno()

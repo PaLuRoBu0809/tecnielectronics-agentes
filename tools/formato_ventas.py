@@ -18,7 +18,7 @@ from __future__ import annotations
 import os
 from decimal import ROUND_HALF_UP, Decimal
 
-from tools.citas_tools import formatear_fecha_legible
+from tools.fechas import formatear_fecha_legible
 from tools.errores_negocio import ErrorNegocio
 
 ESTADOS_PAGO_LEGIBLES = {
@@ -27,6 +27,8 @@ ESTADOS_PAGO_LEGIBLES = {
     "RECHAZADO": "RECHAZADO",
     "CONTRAENTREGA": "PAGO CONTRA ENTREGA",
 }
+# Notas del seguimiento (dashboard) que se le muestran al modelo por pedido.
+MAX_NOVEDADES = 3
 
 
 def pesos(valor) -> str:
@@ -50,7 +52,8 @@ def resumen_carrito(carrito) -> str:
 def resumen_orden(orden: dict) -> str:
     """Una orden en texto: lo que el modelo necesita para responder sobre
     ella. Columnas internas (session_id, referencia de pago, reserva de
-    stock) nunca se incluyen."""
+    stock) nunca se incluyen. Si la orden trae `seguimiento` (las notas del
+    dashboard), se muestran las últimas, sin el responsable (dato interno)."""
     items = orden.get("items") or []
     lineas = "\n".join(
         f"   - {item.get('nombre', 'Producto')} x{item.get('cantidad', 1)}"
@@ -70,6 +73,11 @@ def resumen_orden(orden: dict) -> str:
     ]
     if orden.get("notes"):
         partes.append(f"   Notas: {orden['notes']}")
+    novedades = (orden.get("seguimiento") or [])[-MAX_NOVEDADES:]
+    if novedades:
+        partes.append("   NOVEDADES DEL ENVÍO (de la más antigua a la más reciente):\n" + "\n".join(
+            f"      - {formatear_fecha_legible(n['creado_en'])} [{n.get('estado')}]: {n['nota']}" for n in novedades
+        ))
     if estado_pago in ("PENDIENTE", "RECHAZADO") and orden.get("payment_link") \
             and orden.get("shipping_status") == "PENDIENTE_DESPACHO":
         partes.append(f"   Link de pago: {orden['payment_link']}")

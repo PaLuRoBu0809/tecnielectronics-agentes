@@ -1147,3 +1147,55 @@ Tests: 11 pasan, 1 omitido.
 pago barato primero en `OPENROUTER_MODELS`, o como respaldo final. Con un
 prompt de este tamaño, los `:free` rinden peor y los dos primeros de la
 lista suelen estar agotados (cada turno pierde 2 intentos).
+
+
+## Fase 13 — Servicio Técnico por día de entrega + seguimiento en el dashboard ✅ · 2026-10-08 · [TOOLS/PROMPT/INFRA]
+
+**Por qué:** el modelo de citas por hora y técnico no reflejaba la realidad:
+el cliente DEJA el equipo en la sede y la empresa reparte el trabajo por
+dentro. Respaldo del modelo anterior: rama `respaldo-modelo-citas-por-hora`.
+
+**Qué hace ahora el agente de Servicio Técnico** (prompt reescrito con el negocio):
+- Registra una ORDEN DE SERVICIO con el día en que el cliente trae el equipo
+  (+ hora aproximada opcional, solo informativa, sin cupos).
+- Cambia el día, la hora o los datos, o cancela, SOLO mientras la orden está
+  en `PENDIENTE_RECEPCION` (equipo aún no recibido). Después, da la línea de
+  atención.
+- Consulta el estado y las novedades que la empresa registra en el dashboard
+  (sin mostrar quién las escribió). No registra autorizaciones de costos.
+- Al registrar, recuerda dirección y horario (temas `horario`/`ubicacion` de
+  `info_empresa`). Ventas también recibe horario, dirección y contacto.
+- La empresa asigna internamente quién revisa: el agente nunca habla de técnicos.
+
+**Reglas en código:**
+- `tools/agenda_entregas.py`: lunes a viernes 8:15–12:00 y 14:00–17:45,
+  sábado 8:00–12:30, domingos y festivos de Colombia cerrados (paquete
+  `holidays`), hasta 30 días. **Debe coincidir con el tema `horario` de
+  `info_empresa`.** La hora aproximada debe caer en una jornada de ese día.
+- Migración 013: `ordenes_servicio` + `seguimiento_orden_servicio` y RPC
+  (crear, modificar/cancelar solo del dueño y en PENDIENTE_RECEPCION, cambiar
+  estado / agregar nota / editar nota con nota y responsable obligatorios).
+- Migración 014: `seguimiento_pedido` para `orders` + RPC equivalentes;
+  cancelar desde el dashboard devuelve el stock; un pedido cancelado no se
+  reactiva; un trigger registra también los cambios del cliente o del
+  vencimiento del pago. `Consultar_orden` muestra las 3 últimas novedades.
+- Confirmación de dos turnos igual que antes (`tools/confirmacion.py`).
+
+**Dashboard:** la pestaña "Citas" pasa a "Servicio técnico" (calendario por
+día de entrega, marca "No llegó", tabla filtrable). Ventas y Servicio
+técnico abren el mismo panel de detalle (`web/static/seguimiento.js`):
+estado, registrar novedad (nota + quien la registra, con o sin cambio de
+estado) e historial de notas editable (queda quién editó y cuándo).
+
+**Retirado:** `tools/citas_tools.py`, `tools/citas_repository.py`,
+`tools/tecnicos_repository.py`, `/api/citas`, `/api/tecnicos` y sus tests.
+Las tablas `servicios_agendados` y `tecnicos` quedan como historial.
+
+**Verificación:** 17 scripts de test pasan (nuevos: `test_agenda_entregas`,
+`test_ordenes_servicio`; integración con Postgres real para 013/014), Ruff y
+Mypy limpios. Con el modelo real: registrar (2 turnos), cambiar día
+(2 turnos), consultar estado con novedades del dashboard, cancelar pendiente,
+y rechazo de cancelar con el equipo ya recibido. Hallazgo: si el modelo
+escribe un resumen sin llamar a la tool, el "sí" del cliente vuelve a pedir
+confirmación; se reforzó el prompt para que el resumen salga siempre de
+CONFIRMACION_PENDIENTE.

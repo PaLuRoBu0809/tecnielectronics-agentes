@@ -10,12 +10,14 @@
 </head>
 <body>
   <!--
-    Dashboard único con 4 pestañas (Citas / Ventas / Chat de prueba / Flujo
-    en vivo), sin build step ni framework — cada pestaña ya está presente en
+    Dashboard único con 4 pestañas (Servicio técnico / Ventas / Chat de prueba /
+    Flujo en vivo), sin build step ni framework — cada pestaña ya está presente en
     el DOM desde que carga la página; dashboard.js solo decide cuál se ve
     (display), no recarga nada. La lógica de cada pestaña vive en su propio
     archivo, reutilizado tal cual del resto del proyecto:
-      - Citas  -> admin.js + admin.css (calendario + tabla de registros).
+      - Servicio técnico -> admin.js + admin.css (calendario de entregas + órdenes).
+      - Ventas -> ventas.js (pedidos).
+      - Ambas abren el panel de detalle compartido (seguimiento.js): estado y notas.
       - Chat   -> chat.js + chat.css (panel de pruebas de los agentes).
       - Flujo  -> flujo.js (nuevo: consume el stream de eventos del agente).
     admin.js/chat.js/flujo.js se cargan como módulos ES (`type="module"`)
@@ -27,7 +29,7 @@
     <header class="dashboard-header">
       <h1 class="dashboard-titulo">TECHNO DASHBOARD</h1>
       <nav class="dashboard-nav">
-        <button class="tab-btn activo" data-tab="citas">Citas</button>
+        <button class="tab-btn activo" data-tab="servicio">Servicio técnico</button>
         <button class="tab-btn" data-tab="ventas">Ventas</button>
         <button class="tab-btn" data-tab="chat">Chat prueba</button>
         <button class="tab-btn" data-tab="flujo">Flujo en vivo</button>
@@ -35,8 +37,8 @@
     </header>
 
     <main class="dashboard-main">
-      <!-- ==================== CITAS ==================== -->
-      <section class="dashboard-vista" id="vista-citas" data-vista="citas">
+      <!-- ==================== SERVICIO TÉCNICO: órdenes de servicio (ver admin.js) ==================== -->
+      <section class="dashboard-vista" id="vista-servicio" data-vista="servicio">
         <div class="app-admin">
           <main class="admin-main">
             <section class="panel-calendario">
@@ -59,26 +61,26 @@
 
             <section class="panel-registros">
               <div class="registros-toolbar">
-                <h2>Todos los registros</h2>
-                <input id="filtro-registros" type="text" placeholder="Buscar por cliente, teléfono o servicio…" />
-                <select id="filtro-estado">
+                <h2>Órdenes de servicio</h2>
+                <input id="filtro-registros" type="text" aria-label="Buscar órdenes" placeholder="Buscar por orden, cliente, teléfono, equipo o servicio…" />
+                <select id="filtro-estado" aria-label="Filtrar por estado">
                   <option value="">Todos los estados</option>
                 </select>
                 <span id="registros-contador" class="etiqueta"></span>
+                <button id="servicio-actualizar-btn" class="secundario" title="Volver a cargar las órdenes">↻ Actualizar</button>
               </div>
               <div class="tabla-wrapper">
                 <table id="tabla-registros">
                   <thead>
                     <tr>
-                      <th>Estado</th>
+                      <th>Orden</th>
+                      <th>Trae el equipo</th>
+                      <th>Hora aprox.</th>
                       <th>Cliente</th>
-                      <th>Teléfono</th>
                       <th>Servicio</th>
-                      <th>Técnico</th>
-                      <th>Inicio</th>
-                      <th>Fin</th>
-                      <th>Descripción</th>
-                      <th>ID</th>
+                      <th>Equipo</th>
+                      <th>Problema</th>
+                      <th>Estado</th>
                     </tr>
                   </thead>
                   <tbody id="tabla-registros-body"></tbody>
@@ -221,6 +223,17 @@
       </section>
     </main>
   </div>
+
+  <!-- Panel de detalle compartido por Servicio técnico y Ventas (seguimiento.js):
+       datos, estado, registrar novedad y el historial editable de notas. -->
+  <div class="panel-detalle-fondo" id="panel-detalle-fondo" hidden></div>
+  <aside class="panel-detalle" id="panel-detalle" role="dialog" aria-modal="true" aria-labelledby="panel-detalle-titulo" hidden>
+    <div class="panel-detalle-header">
+      <h3 id="panel-detalle-titulo"></h3>
+      <button id="panel-detalle-cerrar-btn" class="secundario" title="Cerrar">✕</button>
+    </div>
+    <div id="panel-detalle-cuerpo" class="panel-detalle-cuerpo"></div>
+  </aside>
 
   <script type="module" src="/chat.js"></script>
   <script type="module" src="/admin.js"></script>

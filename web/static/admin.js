@@ -1,33 +1,30 @@
 /**
- * admin.js — calendario de citas + listado de registros.
+ * admin.js — pestaña "Servicio técnico": calendario de entregas de equipos +
+ * listado de órdenes de servicio (Fase 13).
  *
- * Organizado en 4 capas, cada una con una única responsabilidad (mismo
- * criterio de "SRP" que pide el skill para los hooks de React, aplicado
- * aquí sin build step ni framework, con funciones simples de JS):
- *   1. ACCESO A DATOS   — obtenerCitas() / obtenerCatalogo(): solo hacen
- *      fetch() y devuelven JSON o lanzan error. No tocan el DOM.
- *   2. DOMINIO           — funciones puras que transforman los datos
- *      (agrupar por día, mapear servicio_id -> nombre, formatear fechas).
- *      No hacen fetch ni tocan el DOM.
- *   3. RENDERIZADO       — construyen y pintan elementos del DOM a partir
- *      de datos ya listos. No deciden CUÁNDO pintar, solo CÓMO.
- *   4. INTERACCIÓN       — listeners de eventos y orquestación (decide
- *      cuándo llamar a las otras tres capas).
+ * Cada orden tiene el DÍA en que el cliente trae su equipo a la sede (y una
+ * hora aproximada, solo informativa). El calendario cuenta los equipos que
+ * llegan cada día; al abrir una orden se ve su detalle, se cambia su estado
+ * y se escriben o editan notas (seguimiento.js), siempre con el nombre de
+ * quien las registra.
  *
- * Esta página es de solo lectura: nunca escribe en Supabase ni pasa por
- * ningún agente/LLM — solo consume GET /api/citas y GET /api/catalogo
- * (ver web/app.py), que a su vez leen directo de la base de datos.
+ * Mismas 4 capas que ventas.js:
+ *   1. ACCESO A DATOS — fetch y nada más.
+ *   2. DOMINIO        — funciones puras (agrupar por día, nombres, fechas).
+ *   3. RENDERIZADO    — construyen DOM a partir de datos listos.
+ *   4. INTERACCIÓN    — listeners y orquestación.
  */
 
 import { apiFetch } from "./api.js";
+import { abrirDetalle, crearBadge, estadoVisible } from "./seguimiento.js";
 
 // ---------------------------------------------------------------------
-// Constantes — cero "magic strings" sueltos en el resto del archivo.
+// Constantes
 // ---------------------------------------------------------------------
 
-const API_CITAS = "/api/citas";
+const API_ORDENES = "/api/ordenes-servicio";
 const API_CATALOGO = "/api/catalogo";
-const API_TECNICOS = "/api/tecnicos";
+const COLUMNAS = 8;
 
 const DIAS_SEMANA = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
 const MESES = [
@@ -35,123 +32,86 @@ const MESES = [
   "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
 ];
 const MAX_CHIPS_POR_CELDA = 3;
-const PREFIJO_ESTADO_CANCELADO = "cancel"; // cubre "cancelado por cliente", "cancelada", etc.
+
+// Valor del ENUM estado_orden_servicio -> texto y estilo del badge.
+export const ESTADOS_SERVICIO = {
+  PENDIENTE_RECEPCION: { texto: "Pendiente de recibir", clase: "badge-pendiente" },
+  RECIBIDO: { texto: "Recibido", clase: "badge-info" },
+  EN_DIAGNOSTICO: { texto: "En diagnóstico", clase: "badge-info" },
+  EN_REPARACION: { texto: "En reparación", clase: "badge-info" },
+  LISTO_PARA_RECOGER: { texto: "Listo para recoger", clase: "badge-confirmado" },
+  ENTREGADO: { texto: "Entregado", clase: "badge-confirmado" },
+  CANCELADO: { texto: "Cancelada", clase: "badge-cancelado" },
+};
+const NO_LLEGO = { texto: "No llegó", clase: "badge-cancelado" };
 
 // ---------------------------------------------------------------------
 // 1. ACCESO A DATOS
 // ---------------------------------------------------------------------
 
-/** Trae TODAS las citas registradas (cualquier estado) desde el backend. */
-async function obtenerCitas() {
-  const resp = await apiFetch(API_CITAS);
-  if (!resp.ok) {
-    throw new Error(`No se pudieron cargar las citas (HTTP ${resp.status})`);
-  }
-  return resp.json();
-}
-
-/** Trae el catálogo completo de servicios técnicos desde el backend. */
-async function obtenerCatalogo() {
-  const resp = await apiFetch(API_CATALOGO);
-  if (!resp.ok) {
-    throw new Error(`No se pudo cargar el catálogo (HTTP ${resp.status})`);
-  }
-  return resp.json();
-}
-
-/** Trae la lista de técnicos desde el backend — solo se usa aquí, en la
- * interfaz de administración; el agente nunca la consulta. */
-async function obtenerTecnicos() {
-  const resp = await apiFetch(API_TECNICOS);
-  if (!resp.ok) {
-    throw new Error(`No se pudieron cargar los técnicos (HTTP ${resp.status})`);
-  }
+async function obtenerJson(url, queCosa) {
+  const resp = await apiFetch(url);
+  if (!resp.ok) throw new Error(`No se pudo cargar ${queCosa} (HTTP ${resp.status})`);
   return resp.json();
 }
 
 // ---------------------------------------------------------------------
-// 2. DOMINIO — funciones puras (mismos datos de entrada -> mismo resultado)
+// 2. DOMINIO — funciones puras
 // ---------------------------------------------------------------------
 
-/** Agrupa una lista de citas por día calendario (clave "YYYY-MM-DD"),
- * tomando el día de `fecha_hora_inicio`. */
-function agruparCitasPorDia(citas) {
+/** "YYYY-MM-DD" de una fecha en hora LOCAL (toISOString daría la de UTC). */
+function fechaLocalISO(fecha) {
+  const mes = String(fecha.getMonth() + 1).padStart(2, "0");
+  const dia = String(fecha.getDate()).padStart(2, "0");
+  return `${fecha.getFullYear()}-${mes}-${dia}`;
+}
+
+function agruparPorDia(ordenes) {
   const mapa = {};
-  for (const cita of citas) {
-    const clave = (cita.fecha_hora_inicio || "").slice(0, 10);
-    if (!clave) continue;
-    if (!mapa[clave]) mapa[clave] = [];
-    mapa[clave].push(cita);
+  for (const orden of ordenes) {
+    (mapa[orden.fecha_entrega] ||= []).push(orden);
   }
   return mapa;
 }
 
-/** Arma un mapa {id_servicio (string) -> fila del catálogo}, para no andar
- * recorriendo el catálogo completo cada vez que se necesita un nombre. */
-function indexarCatalogoPorId(catalogo) {
-  const mapa = {};
-  for (const servicio of catalogo) {
-    mapa[String(servicio.id)] = servicio;
-  }
-  return mapa;
-}
-
-/** Nombre legible de un servicio a partir de su id — si el catálogo no
- * trae ese id (borrado, o catálogo aún cargando), cae en un texto de
- * respaldo en vez de romper el render. */
 function nombreServicio(servicioId, catalogoPorId) {
-  const servicio = catalogoPorId[String(servicioId)];
-  return servicio ? servicio.nombre : `Servicio #${servicioId ?? "?"}`;
+  return catalogoPorId[String(servicioId)]?.nombre || `Servicio #${servicioId ?? "?"}`;
 }
 
-/** Arma un mapa {id_tecnico (string) -> fila de tecnicos}. */
-function indexarTecnicosPorId(tecnicos) {
-  const mapa = {};
-  for (const tecnico of tecnicos) {
-    mapa[String(tecnico.id)] = tecnico;
-  }
-  return mapa;
+/** "09:30:00" -> "9:30 a. m."; sin hora -> "—". */
+function formatearHora(hora) {
+  if (!hora) return "—";
+  const [h, m] = hora.split(":").map(Number);
+  return new Date(2000, 0, 1, h, m).toLocaleTimeString("es-CO", { hour: "numeric", minute: "2-digit" });
 }
 
-/** Nombre legible de un técnico a partir de su id — "Sin asignar" si la
- * cita todavía no tiene tecnico_id (datos previos a esta funcionalidad). */
-function nombreTecnico(tecnicoId, tecnicosPorId) {
-  if (tecnicoId === null || tecnicoId === undefined) return "Sin asignar";
-  const tecnico = tecnicosPorId[String(tecnicoId)];
-  return tecnico ? tecnico.nombre : `Técnico #${tecnicoId}`;
-}
-
-/** True si un estado de cita debe tratarse visualmente como "cancelado"
- * (soft-delete: el estado es texto libre, ej. "cancelado por cliente"). */
-function esEstadoCancelado(estado) {
-  return (estado || "").toLowerCase().includes(PREFIJO_ESTADO_CANCELADO);
-}
-
-function formatearHora(iso) {
-  if (!iso) return "—";
-  const dt = new Date(iso);
-  if (Number.isNaN(dt.getTime())) return "—";
-  return dt.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" });
-}
-
-function formatearFechaHoraLegible(iso) {
-  if (!iso) return "—";
-  const dt = new Date(iso);
-  if (Number.isNaN(dt.getTime())) return "—";
-  return dt.toLocaleString("es-CO", {
-    day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
+function formatearDia(fechaISO) {
+  const [anio, mes, dia] = fechaISO.split("-").map(Number);
+  return new Date(anio, mes - 1, dia).toLocaleDateString("es-CO", {
+    weekday: "long", day: "numeric", month: "long", year: "numeric",
   });
 }
 
+/** Pasó el día y el equipo nunca llegó: la empresa debería llamar al cliente. */
+function noLlego(orden, hoyISO) {
+  return orden.estado === "PENDIENTE_RECEPCION" && orden.fecha_entrega < hoyISO;
+}
+
+function estadoDeOrden(orden, hoyISO) {
+  return noLlego(orden, hoyISO) ? NO_LLEGO : estadoVisible(ESTADOS_SERVICIO, orden.estado);
+}
+
+function ordenarPorHora(a, b) {
+  return (a.hora_aproximada || "99").localeCompare(b.hora_aproximada || "99");
+}
+
 // ---------------------------------------------------------------------
-// Estado de la página (no es "memoria de negocio": solo qué mes se está
-// mostrando y la última copia de los datos que trajo el backend).
+// Estado de la página
 // ---------------------------------------------------------------------
 
 let mesVisible = new Date();
-let citasCache = [];
+let ordenesCache = [];
 let catalogoPorId = {};
-let tecnicosPorId = {};
 
 const el = {
   mesActualLabel: document.getElementById("mes-actual-label"),
@@ -163,64 +123,62 @@ const el = {
   panelDiaTitulo: document.getElementById("panel-dia-titulo"),
   panelDiaLista: document.getElementById("panel-dia-lista"),
   panelDiaCerrarBtn: document.getElementById("panel-dia-cerrar-btn"),
-  filtroRegistros: document.getElementById("filtro-registros"),
+  filtroTexto: document.getElementById("filtro-registros"),
   filtroEstado: document.getElementById("filtro-estado"),
-  registrosContador: document.getElementById("registros-contador"),
+  contador: document.getElementById("registros-contador"),
   tablaBody: document.getElementById("tabla-registros-body"),
+  actualizarBtn: document.getElementById("servicio-actualizar-btn"),
 };
 
 // ---------------------------------------------------------------------
-// 3. RENDERIZADO — solo construyen DOM a partir de datos ya listos.
+// 3. RENDERIZADO
 // ---------------------------------------------------------------------
 
-function crearCeldaVacia() {
-  const div = document.createElement("div");
-  div.className = "calendario-celda calendario-celda-vacia";
-  return div;
-}
-
-function crearChipCita(cita) {
+function crearChip(orden, hoyISO) {
   const chip = document.createElement("div");
-  chip.className = `calendario-chip ${esEstadoCancelado(cita.estado) ? "badge-cancelado" : "badge-confirmado"}`;
-  chip.textContent = `${formatearHora(cita.fecha_hora_inicio)} ${cita.cliente_nombre || ""}`.trim();
+  chip.className = `calendario-chip ${estadoDeOrden(orden, hoyISO).clase}`;
+  const hora = orden.hora_aproximada ? `${formatearHora(orden.hora_aproximada)} ` : "";
+  chip.textContent = `${hora}${orden.cliente_nombre || ""}`.trim();
   return chip;
 }
 
-function crearCeldaDia(numeroDia, fechaISO, citasDelDia, esHoy) {
+function crearCeldaDia(numeroDia, fechaISO, ordenesDelDia, hoyISO) {
   const celda = document.createElement("div");
-  celda.className = "calendario-celda" + (esHoy ? " calendario-celda-hoy" : "");
+  celda.className = "calendario-celda" + (fechaISO === hoyISO ? " calendario-celda-hoy" : "");
 
   const numero = document.createElement("span");
   numero.className = "calendario-numero";
   numero.textContent = String(numeroDia);
   celda.appendChild(numero);
 
-  for (const cita of citasDelDia.slice(0, MAX_CHIPS_POR_CELDA)) {
-    celda.appendChild(crearChipCita(cita));
+  const activas = ordenesDelDia.filter((o) => o.estado !== "CANCELADO");
+  if (activas.length > 0) {
+    const conteo = document.createElement("span");
+    conteo.className = "calendario-conteo";
+    conteo.textContent = `${activas.length} equipo${activas.length === 1 ? "" : "s"}`;
+    celda.appendChild(conteo);
   }
-  if (citasDelDia.length > MAX_CHIPS_POR_CELDA) {
+  for (const orden of ordenesDelDia.slice(0, MAX_CHIPS_POR_CELDA)) {
+    celda.appendChild(crearChip(orden, hoyISO));
+  }
+  if (ordenesDelDia.length > MAX_CHIPS_POR_CELDA) {
     const mas = document.createElement("div");
     mas.className = "calendario-chip-mas";
-    mas.textContent = `+${citasDelDia.length - MAX_CHIPS_POR_CELDA} más`;
+    mas.textContent = `+${ordenesDelDia.length - MAX_CHIPS_POR_CELDA} más`;
     celda.appendChild(mas);
   }
-
-  if (citasDelDia.length > 0) {
+  if (ordenesDelDia.length > 0) {
     celda.classList.add("calendario-celda-con-citas");
-    celda.addEventListener("click", () => abrirPanelDia(fechaISO, citasDelDia));
+    celda.addEventListener("click", () => abrirPanelDia(fechaISO, ordenesDelDia));
   }
-
   return celda;
 }
 
-/** Repinta la grilla completa del mes actualmente visible (`mesVisible`)
- * usando `citasCache` — no vuelve a pedir datos al backend. */
 function renderizarCalendario() {
   const anio = mesVisible.getFullYear();
   const mes = mesVisible.getMonth();
   el.mesActualLabel.textContent = `${MESES[mes]} ${anio}`;
-
-  el.calendarioGrid.innerHTML = "";
+  el.calendarioGrid.replaceChildren();
   for (const dia of DIAS_SEMANA) {
     const encabezado = document.createElement("div");
     encabezado.className = "calendario-dia-header";
@@ -228,156 +186,179 @@ function renderizarCalendario() {
     el.calendarioGrid.appendChild(encabezado);
   }
 
-  const primerDiaMes = new Date(anio, mes, 1);
-  const offsetInicial = (primerDiaMes.getDay() + 6) % 7; // lunes = 0
+  const offsetInicial = (new Date(anio, mes, 1).getDay() + 6) % 7; // lunes = 0
   const diasEnMes = new Date(anio, mes + 1, 0).getDate();
-  const citasPorDia = agruparCitasPorDia(citasCache);
-  const hoyISO = new Date().toISOString().slice(0, 10);
+  const porDia = agruparPorDia(ordenesCache);
+  const hoyISO = fechaLocalISO(new Date());
 
   for (let i = 0; i < offsetInicial; i++) {
-    el.calendarioGrid.appendChild(crearCeldaVacia());
+    const vacia = document.createElement("div");
+    vacia.className = "calendario-celda calendario-celda-vacia";
+    el.calendarioGrid.appendChild(vacia);
   }
   for (let dia = 1; dia <= diasEnMes; dia++) {
-    const fechaISO = `${anio}-${String(mes + 1).padStart(2, "0")}-${String(dia).padStart(2, "0")}`;
-    const citasDelDia = (citasPorDia[fechaISO] || [])
-      .slice()
-      .sort((a, b) => a.fecha_hora_inicio.localeCompare(b.fecha_hora_inicio));
-    el.calendarioGrid.appendChild(crearCeldaDia(dia, fechaISO, citasDelDia, fechaISO === hoyISO));
+    const fechaISO = fechaLocalISO(new Date(anio, mes, dia));
+    const delDia = (porDia[fechaISO] || []).slice().sort(ordenarPorHora);
+    el.calendarioGrid.appendChild(crearCeldaDia(dia, fechaISO, delDia, hoyISO));
   }
 }
 
-/** Panel lateral con el detalle completo (todas las citas) de un día —
- * se abre al hacer click en una celda del calendario que tenga citas. */
-function abrirPanelDia(fechaISO, citasDelDia) {
+function abrirPanelDia(fechaISO, ordenesDelDia) {
+  const hoyISO = fechaLocalISO(new Date());
   el.panelDia.hidden = false;
-  el.panelDiaTitulo.textContent = `Citas del ${fechaISO}`;
-  el.panelDiaLista.innerHTML = "";
-
-  for (const cita of citasDelDia) {
+  el.panelDiaTitulo.textContent = `Equipos del ${formatearDia(fechaISO)}`;
+  el.panelDiaLista.replaceChildren();
+  for (const orden of ordenesDelDia) {
     const li = document.createElement("li");
+    li.className = "panel-dia-item";
+    li.tabIndex = 0;
 
     const filaTitulo = document.createElement("div");
     filaTitulo.className = "fila-titulo";
-    const nombreCliente = document.createElement("span");
-    nombreCliente.textContent = cita.cliente_nombre || "(sin nombre)";
+    const nombre = document.createElement("span");
+    nombre.textContent = `#${orden.numero} · ${orden.cliente_nombre}`;
     const hora = document.createElement("span");
-    hora.textContent = `${formatearHora(cita.fecha_hora_inicio)} - ${formatearHora(cita.fecha_hora_fin)}`;
-    filaTitulo.append(nombreCliente, hora);
+    hora.textContent = formatearHora(orden.hora_aproximada);
+    filaTitulo.append(nombre, hora);
 
-    const filaServicio = document.createElement("div");
-    filaServicio.className = "fila-detalle";
-    filaServicio.textContent = `${nombreServicio(cita.servicio_id, catalogoPorId)} · ${nombreTecnico(cita.tecnico_id, tecnicosPorId)}`;
+    const filaEquipo = document.createElement("div");
+    filaEquipo.className = "fila-detalle";
+    filaEquipo.textContent = `${orden.equipo} · ${nombreServicio(orden.servicio_id, catalogoPorId)}`;
 
     const filaEstado = document.createElement("div");
     filaEstado.className = "fila-detalle";
-    filaEstado.textContent = `Estado: ${cita.estado || "—"} · Tel: ${cita.cliente_telefono || "—"}`;
+    filaEstado.appendChild(crearBadge(estadoDeOrden(orden, hoyISO)));
 
-    li.append(filaTitulo, filaServicio, filaEstado);
+    li.append(filaTitulo, filaEquipo, filaEstado);
+    li.addEventListener("click", () => abrirOrden(orden.numero));
+    li.addEventListener("keydown", (e) => e.key === "Enter" && abrirOrden(orden.numero));
     el.panelDiaLista.appendChild(li);
   }
 }
 
-function crearBadgeEstado(estado) {
-  const span = document.createElement("span");
-  span.className = `badge-estado ${esEstadoCancelado(estado) ? "badge-cancelado" : "badge-confirmado"}`;
-  span.textContent = estado || "—";
-  return span;
+function crearCelda(contenido) {
+  const td = document.createElement("td");
+  if (contenido instanceof Node) td.appendChild(contenido);
+  else td.textContent = contenido;
+  return td;
 }
 
-function crearFilaRegistro(cita) {
+function crearFila(orden, hoyISO) {
   const tr = document.createElement("tr");
-
-  const tdEstado = document.createElement("td");
-  tdEstado.appendChild(crearBadgeEstado(cita.estado));
-
-  const valores = [
-    cita.cliente_nombre || "—",
-    cita.cliente_telefono || "—",
-    nombreServicio(cita.servicio_id, catalogoPorId),
-    nombreTecnico(cita.tecnico_id, tecnicosPorId),
-    formatearFechaHoraLegible(cita.fecha_hora_inicio),
-    formatearFechaHoraLegible(cita.fecha_hora_fin),
-    cita.Descripcion || "—",
-    cita.google_calendar_event_id || "—",
-  ];
-
-  tr.appendChild(tdEstado);
-  for (const valor of valores) {
-    const td = document.createElement("td");
-    td.textContent = valor;
-    tr.appendChild(td);
-  }
+  tr.className = "fila-clicable";
+  tr.tabIndex = 0;
+  tr.title = "Ver detalle, cambiar estado y notas";
+  tr.append(
+    crearCelda(`#${orden.numero}`),
+    crearCelda(formatearDia(orden.fecha_entrega)),
+    crearCelda(formatearHora(orden.hora_aproximada)),
+    crearCelda(`${orden.cliente_nombre} · ${orden.cliente_telefono}`),
+    crearCelda(nombreServicio(orden.servicio_id, catalogoPorId)),
+    crearCelda(orden.equipo),
+    crearCelda(orden.descripcion),
+    crearCelda(crearBadge(estadoDeOrden(orden, hoyISO))),
+  );
+  tr.addEventListener("click", () => abrirOrden(orden.numero));
+  tr.addEventListener("keydown", (e) => e.key === "Enter" && abrirOrden(orden.numero));
   return tr;
 }
 
-/** Repinta la tabla de registros aplicando el texto y estado que el
- * usuario haya escrito/elegido en los filtros — no vuelve a pedir datos
- * al backend, filtra sobre `citasCache` en memoria. */
-function renderizarTablaRegistros() {
-  const textoFiltro = (el.filtroRegistros.value || "").toLowerCase().trim();
-  const estadoFiltro = el.filtroEstado.value;
-
-  const filas = citasCache.filter((cita) => {
-    const coincideTexto = !textoFiltro || [
-      cita.cliente_nombre,
-      cita.cliente_telefono,
-      nombreServicio(cita.servicio_id, catalogoPorId),
-      nombreTecnico(cita.tecnico_id, tecnicosPorId),
-    ].some((campo) => (campo || "").toLowerCase().includes(textoFiltro));
-    const coincideEstado = !estadoFiltro || cita.estado === estadoFiltro;
-    return coincideTexto && coincideEstado;
-  });
-
-  el.tablaBody.innerHTML = "";
-  if (filas.length === 0) {
-    const tr = document.createElement("tr");
-    const td = document.createElement("td");
-    td.colSpan = 8;
-    td.className = "aviso-vacio";
-    td.textContent = "No hay registros que coincidan con el filtro.";
-    tr.appendChild(td);
-    el.tablaBody.appendChild(tr);
-  } else {
-    for (const cita of filas) {
-      el.tablaBody.appendChild(crearFilaRegistro(cita));
-    }
-  }
-  el.registrosContador.textContent = `${filas.length} de ${citasCache.length} registros`;
+function crearFilaAviso(texto, clase) {
+  const tr = document.createElement("tr");
+  const td = document.createElement("td");
+  td.colSpan = COLUMNAS;
+  td.className = clase;
+  td.textContent = texto;
+  tr.appendChild(td);
+  return tr;
 }
 
-/** Reconstruye las opciones del <select> de estados a partir de los
- * valores reales presentes en `citasCache` — nunca una lista fija a mano,
- * porque el estado es texto libre definido por el negocio (soft-delete). */
+function renderizarTabla() {
+  const texto = el.filtroTexto.value.toLowerCase().trim();
+  const estado = el.filtroEstado.value;
+  const hoyISO = fechaLocalISO(new Date());
+  const filas = ordenesCache.filter((orden) => {
+    const buscable = [
+      `#${orden.numero}`, orden.cliente_nombre, orden.cliente_telefono, orden.equipo, orden.descripcion,
+      nombreServicio(orden.servicio_id, catalogoPorId),
+    ].join(" ").toLowerCase();
+    const coincideEstado = !estado
+      || (estado === "NO_LLEGO" ? noLlego(orden, hoyISO) : orden.estado === estado);
+    return (!texto || buscable.includes(texto)) && coincideEstado;
+  });
+
+  el.tablaBody.replaceChildren();
+  if (filas.length === 0) {
+    el.tablaBody.appendChild(crearFilaAviso(
+      ordenesCache.length ? "No hay órdenes que coincidan con el filtro."
+        : "Todavía no hay órdenes de servicio: aparecerán cuando un cliente agende con el asistente.",
+      "aviso-vacio",
+    ));
+  }
+  for (const orden of filas) el.tablaBody.appendChild(crearFila(orden, hoyISO));
+  el.contador.textContent = `${filas.length} de ${ordenesCache.length} órdenes`;
+}
+
 function poblarFiltroEstados() {
-  const estados = [...new Set(citasCache.map((c) => c.estado).filter(Boolean))].sort();
-  const valorPrevio = el.filtroEstado.value;
-
-  el.filtroEstado.innerHTML = "";
-  const opcionTodos = document.createElement("option");
-  opcionTodos.value = "";
-  opcionTodos.textContent = "Todos los estados";
-  el.filtroEstado.appendChild(opcionTodos);
-
-  for (const estado of estados) {
+  for (const [valor, { texto }] of [...Object.entries(ESTADOS_SERVICIO), ["NO_LLEGO", NO_LLEGO]]) {
     const opcion = document.createElement("option");
-    opcion.value = estado;
-    opcion.textContent = estado;
+    opcion.value = valor;
+    opcion.textContent = texto;
     el.filtroEstado.appendChild(opcion);
   }
-  el.filtroEstado.value = estados.includes(valorPrevio) ? valorPrevio : "";
 }
 
 function mostrarErrorCarga(err) {
-  el.calendarioGrid.innerHTML = "";
-  const aviso = document.createElement("p");
-  aviso.className = "aviso-error";
-  aviso.textContent = `⚠️ No se pudieron cargar los datos: ${err.message}`;
-  el.calendarioGrid.appendChild(aviso);
+  el.tablaBody.replaceChildren(crearFilaAviso(`⚠️ No se pudieron cargar los datos: ${err.message}`, "aviso-error"));
+  el.contador.textContent = "";
 }
 
 // ---------------------------------------------------------------------
-// 4. INTERACCIÓN — listeners y orquestación (decide CUÁNDO llamar arriba).
+// 4. INTERACCIÓN
 // ---------------------------------------------------------------------
+
+function abrirOrden(numero) {
+  abrirDetalle({
+    titulo: `Orden de servicio #${numero}`,
+    estados: ESTADOS_SERVICIO,
+    urlEstado: `${API_ORDENES}/${numero}/estado`,
+    urlNota: `${API_ORDENES}/${numero}/notas`,
+    urlEditarNota: (id) => `${API_ORDENES}/notas/${id}`,
+    alCambiar: cargar,
+    cargar: async () => {
+      const { orden, seguimiento } = await obtenerJson(`${API_ORDENES}/${numero}`, "la orden");
+      return {
+        estado: orden.estado,
+        notas: seguimiento,
+        datos: [
+          ["Cliente", `${orden.cliente_nombre} · ${orden.cliente_telefono}`],
+          ["Servicio", nombreServicio(orden.servicio_id, catalogoPorId)],
+          ["Equipo", orden.equipo],
+          ["Problema", orden.descripcion],
+          ["Trae el equipo", `${formatearDia(orden.fecha_entrega)} · ${formatearHora(orden.hora_aproximada)}`],
+        ],
+      };
+    },
+  });
+}
+
+async function cargar() {
+  el.actualizarBtn.disabled = true;
+  try {
+    const [ordenes, catalogo] = await Promise.all([
+      obtenerJson(API_ORDENES, "las órdenes de servicio"),
+      obtenerJson(API_CATALOGO, "el catálogo"),
+    ]);
+    ordenesCache = ordenes;
+    catalogoPorId = Object.fromEntries(catalogo.map((s) => [String(s.id), s]));
+    renderizarCalendario();
+    renderizarTabla();
+  } catch (err) {
+    mostrarErrorCarga(err);
+  } finally {
+    el.actualizarBtn.disabled = false;
+  }
+}
 
 function cambiarMes(delta) {
   mesVisible = new Date(mesVisible.getFullYear(), mesVisible.getMonth() + delta, 1);
@@ -395,28 +376,9 @@ el.mesHoyBtn.addEventListener("click", () => {
 el.panelDiaCerrarBtn.addEventListener("click", () => {
   el.panelDia.hidden = true;
 });
-el.filtroRegistros.addEventListener("input", renderizarTablaRegistros);
-el.filtroEstado.addEventListener("change", renderizarTablaRegistros);
+el.filtroTexto.addEventListener("input", renderizarTabla);
+el.filtroEstado.addEventListener("change", renderizarTabla);
+el.actualizarBtn.addEventListener("click", cargar);
 
-/** Punto de entrada: trae citas + catálogo en paralelo y pinta ambas
- * secciones. Si algo falla (backend caído, Supabase inalcanzable), lo
- * muestra en pantalla en vez de dejar la página en blanco sin explicación. */
-async function iniciar() {
-  try {
-    const [citas, catalogo, tecnicos] = await Promise.all([
-      obtenerCitas(),
-      obtenerCatalogo(),
-      obtenerTecnicos(),
-    ]);
-    citasCache = citas;
-    catalogoPorId = indexarCatalogoPorId(catalogo);
-    tecnicosPorId = indexarTecnicosPorId(tecnicos);
-    poblarFiltroEstados();
-    renderizarCalendario();
-    renderizarTablaRegistros();
-  } catch (err) {
-    mostrarErrorCarga(err);
-  }
-}
-
-iniciar();
+poblarFiltroEstados();
+cargar();

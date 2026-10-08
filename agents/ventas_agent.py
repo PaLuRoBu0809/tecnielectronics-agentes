@@ -30,7 +30,7 @@ from typing import Callable, Optional
 
 from contexto_conversacion import aplicar_ventana, construir_ficha, nota_ficha
 from llm_loop import run_agent_loop
-from tools import carrito_tools, inventario_repository, inventario_tools, ordenes_tools
+from tools import carrito_tools, info_empresa, inventario_repository, inventario_tools, ordenes_tools
 from tools.validacion_tools import ARGUMENTOS_VENTAS, con_validacion
 
 logger = logging.getLogger(__name__)
@@ -424,7 +424,9 @@ def run(
         tool_functions = {n: f for n, f in tool_functions.items() if n != TOOL_CATEGORIAS}
     texto, ventana_actualizada = run_agent_loop(
         system_prompt=(
-            SYSTEM_PROMPT + categorias
+            # Horario, dirección y contacto de la sede (Fase 13): para quien
+            # pregunta si puede ver o recoger un producto en la tienda.
+            SYSTEM_PROMPT + categorias + info_empresa.nota_temas()
             + nota_ficha(construir_ficha(descartados, CAMPOS_FICHA), RECORDATORIO_FICHA)
         ),
         messages=ventana,

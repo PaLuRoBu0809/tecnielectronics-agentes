@@ -81,6 +81,30 @@ def nota_para_prompt() -> str:
     return texto
 
 
+ENCABEZADO_NOTA_SUBAGENTE = """
+
+---
+DATOS DE LA SEDE (inyectados automáticamente desde la base de datos; son la
+ÚNICA fuente válida: cópialos tal cual, nunca los inventes ni los cambies):
+"""
+
+# Lo que los sub-agentes necesitan para decirle al cliente cuándo y dónde
+# llevar o recoger algo (Fase 13).
+TEMAS_SEDE = ("horario", "ubicacion", "contacto")
+
+
+def nota_temas(temas: tuple = TEMAS_SEDE) -> str:
+    """Nota con el contenido de esos temas, para el prompt de un sub-agente
+    (Servicio Técnico, Ventas). Vacía si la tabla no se puede leer."""
+    try:
+        por_tema = {t.tema: t for t in listar()}
+    except Exception:
+        logger.warning("No se pudo leer info_empresa para el prompt de un sub-agente", exc_info=True)
+        return ""
+    lineas = [f"- {por_tema[t].titulo}: {por_tema[t].contenido}" for t in temas if t in por_tema]
+    return ENCABEZADO_NOTA_SUBAGENTE + "\n".join(lineas) if lineas else ""
+
+
 def info_empresa(tema: str) -> str:
     """{Info_empresa}: el contenido de un tema. Nunca lanza excepciones."""
     try:

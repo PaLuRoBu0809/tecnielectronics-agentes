@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import os
 
-from tools.citas_tools import formatear_fecha_legible
+from tools.fechas import formatear_fecha_legible
 from tools.formato_ventas import pesos
 
 

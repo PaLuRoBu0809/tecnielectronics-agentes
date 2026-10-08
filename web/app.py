@@ -16,14 +16,14 @@ historial de cada conversación se guarda en la tabla `conversaciones` de
 Supabase al final de cada turno, así que sobrevive a reinicios del servidor
 y es el mismo sin importar desde qué instancia se atienda la petición.
 
-Además de `/api/chat`, expone `/api/citas`, `/api/catalogo` y
-`/api/tecnicos` — lectura directa de Supabase (sin pasar por el LLM ni por
-ningún agente) para la pestaña "Citas" del dashboard
-(`web/static/dashboard.html`). Estos endpoints son "controladores delgados":
-no llevan lógica de negocio, solo parsean la petición y delegan a
-`tools/citas_repository.py`, `tools/catalog_tools.py` y
-`tools/tecnicos_repository.py`, igual que `chat()` delega en
-`agents.orquestador`.
+Además de `/api/chat`, expone los endpoints de las pestañas "Servicio
+técnico" y "Ventas" del dashboard (`/api/ordenes-servicio...`,
+`/api/pedidos...`, `/api/catalogo`): leer órdenes y pedidos, cambiar su
+estado y escribir o editar notas de seguimiento (Fase 13; nota y
+responsable obligatorios). Son "controladores delgados": no pasan por el
+LLM ni llevan lógica de negocio, solo validan la petición y delegan en
+`tools/ordenes_servicio_repository.py`, `tools/ordenes_repository.py` y
+`tools/catalog_tools.py`, cuyas funciones de Postgres aplican las reglas.
 
 También expone `/api/flujo/stream` (Server-Sent Events) para la pestaña
 "Flujo en Vivo": transmite en tiempo real los eventos que publica
@@ -44,8 +44,9 @@ import json
 import logging
 import os
 import uuid
+from datetime import date
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 import anyio
 from dotenv import load_dotenv
@@ -53,14 +54,15 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Respons
 from fastapi.responses import JSONResponse
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from agents import orquestador
 from config import validar_configuracion
 from sesiones import AlmacenSesiones, TurnoEnCurso
 from notificaciones.notificador import NotificadorHistorial
-from tools import catalog_tools, citas_repository, eventos_agente, metricas, tecnicos_repository
+from tools import catalog_tools, eventos_agente, metricas, ordenes_servicio_repository
 from tools import ordenes_repository, pagos, servicio_pagos, supabase_client
+from tools.errores_negocio import ErrorNegocio
 from web.seguridad import (
     COOKIE_SESION,
     DURACION_SESION_S,
@@ -157,41 +159,136 @@ def listar_sesiones() -> dict:
     return {"sesiones": _almacen.ids()}
 
 
-@api.get("/citas")
-def listar_citas(desde: Optional[str] = None, hasta: Optional[str] = None) -> list:
-    """Todas las citas registradas (cualquier estado), con todas sus columnas
-    reales de Supabase. Es lectura directa a la base de datos — no pasa por
-    ningún agente ni por el LLM. `desde`/`hasta` (ISO 8601, opcionales)
-    acotan por `fecha_hora_inicio`, útil para que el frontend pida solo el
-    mes que está mostrando en vez de traer siempre la tabla completa.
-    """
-    return citas_repository.leer_todas_las_citas(fecha_desde=desde, fecha_hasta=hasta)
+# ---------------------------------------------------------------------------
+# Dashboard: Servicio técnico y Ventas (Fase 13)
+# ---------------------------------------------------------------------------
+
+EstadoOrdenServicio = Literal[
+    "PENDIENTE_RECEPCION", "RECIBIDO", "EN_DIAGNOSTICO", "EN_REPARACION", "LISTO_PARA_RECOGER", "ENTREGADO",
+    "CANCELADO",
+]
+EstadoEnvio = Literal["PENDIENTE_DESPACHO", "DESPACHADO", "ENTREGADO", "CANCELADO"]
+
+
+class NotaRequest(BaseModel):
+    """Toda nota lleva el nombre de quien la escribe (lo exige el negocio)."""
+
+    nota: str = Field(min_length=1, max_length=2000)
+    responsable: str = Field(min_length=1, max_length=80)
+
+    @field_validator("nota", "responsable")
+    @classmethod
+    def _sin_espacios_sobrantes(cls, valor: str) -> str:
+        valor = valor.strip()
+        if not valor:
+            raise ValueError("no puede estar vacío")
+        return valor
+
+
+class EstadoOrdenServicioRequest(NotaRequest):
+    estado: EstadoOrdenServicio
+
+
+class EstadoPedidoRequest(NotaRequest):
+    estado: EstadoEnvio
+
+
+_ERRORES_PANEL = {
+    "ORDEN_SERVICIO_NO_ENCONTRADA": (404, "La orden de servicio no existe."),
+    "ORDEN_NO_ENCONTRADA": (404, "El pedido no existe."),
+    "NOTA_NO_ENCONTRADA": (404, "La nota no existe."),
+    "MISMO_ESTADO": (409, "Ya está en ese estado. Para dejar una novedad sin cambiar el estado, usa Agregar nota."),
+    "PEDIDO_CANCELADO": (409, "Un pedido cancelado no se reactiva (su stock ya volvió al inventario)."),
+    "NOTA_REQUERIDA": (422, "La nota es obligatoria."),
+    "RESPONSABLE_REQUERIDO": (422, "El nombre de quien registra la nota es obligatorio."),
+}
+
+
+def _escritura_panel(funcion, *args):
+    """Ejecuta una escritura del panel y traduce las reglas de negocio de
+    Postgres a respuestas HTTP con un mensaje legible."""
+    try:
+        return funcion(*args)
+    except ErrorNegocio as exc:
+        estado, mensaje = _ERRORES_PANEL.get(exc.codigo, (409, f"No se pudo completar ({exc.codigo})."))
+        raise HTTPException(status_code=estado, detail=mensaje) from None
+
+
+@api.get("/ordenes-servicio")
+def listar_ordenes_servicio(desde: Optional[date] = None, hasta: Optional[date] = None) -> list:
+    """Órdenes de servicio de todos los clientes; `desde`/`hasta` (YYYY-MM-DD)
+    acotan por el día en que el cliente trae el equipo."""
+    return ordenes_servicio_repository.listar_todas(
+        desde.isoformat() if desde else None, hasta.isoformat() if hasta else None
+    )
+
+
+@api.get("/ordenes-servicio/{numero}")
+def obtener_orden_servicio(numero: int) -> dict:
+    """Una orden con su historial de notas (de la más antigua a la más reciente)."""
+    orden = ordenes_servicio_repository.leer(numero)
+    if orden is None:
+        raise HTTPException(status_code=404, detail="La orden de servicio no existe.")
+    return {"orden": orden, "seguimiento": ordenes_servicio_repository.seguimiento([numero]).get(numero, [])}
+
+
+@api.post("/ordenes-servicio/{numero}/estado")
+def cambiar_estado_orden_servicio(numero: int, payload: EstadoOrdenServicioRequest) -> dict:
+    return _escritura_panel(
+        ordenes_servicio_repository.cambiar_estado, numero, payload.estado, payload.nota, payload.responsable
+    )
+
+
+@api.post("/ordenes-servicio/{numero}/notas")
+def agregar_nota_orden_servicio(numero: int, payload: NotaRequest) -> dict:
+    return _escritura_panel(ordenes_servicio_repository.agregar_nota, numero, payload.nota, payload.responsable)
+
+
+@api.patch("/ordenes-servicio/notas/{id_nota}")
+def editar_nota_orden_servicio(id_nota: int, payload: NotaRequest) -> dict:
+    return _escritura_panel(ordenes_servicio_repository.editar_nota, id_nota, payload.nota, payload.responsable)
 
 
 @api.get("/pedidos")
 def listar_pedidos() -> list:
     """Pedidos de todos los clientes, del más reciente al más antiguo, para
     la pestaña Ventas del panel. Lectura directa de `orders`: no pasa por
-    ningún agente ni por el LLM (controlador delgado, igual que /citas)."""
+    ningún agente ni por el LLM."""
     return ordenes_repository.listar_todas()
+
+
+@api.get("/pedidos/{order_number}")
+def obtener_pedido(order_number: int) -> dict:
+    """Un pedido con su historial de notas de envío."""
+    pedido = ordenes_repository.leer_para_panel(order_number)
+    if pedido is None:
+        raise HTTPException(status_code=404, detail="El pedido no existe.")
+    return {"pedido": pedido, "seguimiento": ordenes_repository.seguimiento([order_number]).get(order_number, [])}
+
+
+@api.post("/pedidos/{order_number}/estado")
+def cambiar_estado_pedido(order_number: int, payload: EstadoPedidoRequest) -> dict:
+    """Nuevo estado de envío; CANCELADO devuelve el stock reservado."""
+    return _escritura_panel(
+        ordenes_repository.cambiar_estado_envio, order_number, payload.estado, payload.nota, payload.responsable
+    )
+
+
+@api.post("/pedidos/{order_number}/notas")
+def agregar_nota_pedido(order_number: int, payload: NotaRequest) -> dict:
+    return _escritura_panel(ordenes_repository.agregar_nota, order_number, payload.nota, payload.responsable)
+
+
+@api.patch("/pedidos/notas/{id_nota}")
+def editar_nota_pedido(id_nota: int, payload: NotaRequest) -> dict:
+    return _escritura_panel(ordenes_repository.editar_nota, id_nota, payload.nota, payload.responsable)
 
 
 @api.get("/catalogo")
 def listar_catalogo() -> list:
-    """Catálogo completo de servicios técnicos, con todas sus columnas
-    reales de Supabase. La interfaz de administración lo usa para mostrar el
-    nombre del servicio junto a cada cita (las citas solo guardan
-    `servicio_id`, no el nombre)."""
+    """Catálogo de servicios técnicos: el panel muestra el nombre del
+    servicio junto a cada orden (las órdenes solo guardan `servicio_id`)."""
     return catalog_tools.listar_catalogo()
-
-
-@api.get("/tecnicos")
-def listar_tecnicos() -> list:
-    """Todos los técnicos registrados (ver `supabase/migrations/20260928000003_tecnicos.sql`). La
-    interfaz de administración lo usa para mostrar el nombre del técnico
-    asignado junto a cada cita (las citas solo guardan `tecnico_id`) — el
-    agente nunca usa este endpoint ni menciona técnicos al cliente."""
-    return tecnicos_repository.listar_tecnicos()
 
 
 @api.get("/flujo/stream")

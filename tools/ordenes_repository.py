@@ -146,3 +146,53 @@ def marcar_estado_notificado(order_number: int, estado: str) -> None:
         params={"order_number": f"eq.{order_number}"},
         payload={"estado_pago_notificado": estado},
     )
+
+
+# ---------------------------------------------------------------------------
+# Seguimiento (migración 20261008000014): estado de envío + notas
+# ---------------------------------------------------------------------------
+
+TABLA_SEGUIMIENTO = "seguimiento_pedido"
+
+
+def seguimiento(order_numbers: list) -> dict:
+    """{order_number: [notas de la más antigua a la más reciente]} de varios
+    pedidos en una sola consulta."""
+    if not order_numbers:
+        return {}
+    filas = supabase_client.get_rows(TABLA_SEGUIMIENTO, params={
+        "order_number": f"in.({','.join(str(int(n)) for n in order_numbers)})",
+        "select": "*", "order": "creado_en.asc,id.asc",
+    })
+    agrupadas: dict = {int(n): [] for n in order_numbers}
+    for fila in filas:
+        agrupadas.setdefault(fila["order_number"], []).append(fila)
+    return agrupadas
+
+
+def leer_para_panel(order_number: int) -> Optional[dict]:
+    """Un pedido de cualquier cliente (solo para el dashboard)."""
+    filas = supabase_client.get_rows(
+        _tabla_ordenes(), params={"order_number": f"eq.{order_number}", "select": "*"}
+    )
+    return filas[0] if filas else None
+
+
+def cambiar_estado_envio(order_number: int, estado: str, nota: str, responsable: str) -> dict:
+    """Dashboard: nuevo estado de envío con nota y responsable obligatorios.
+    CANCELADO devuelve el stock reservado."""
+    return supabase_client.rpc_con_reglas("cambiar_estado_pedido", {
+        "p_order_number": order_number, "p_estado": estado, "p_nota": nota, "p_responsable": responsable,
+    })
+
+
+def agregar_nota(order_number: int, nota: str, responsable: str) -> dict:
+    return supabase_client.rpc_con_reglas("agregar_nota_pedido", {
+        "p_order_number": order_number, "p_nota": nota, "p_responsable": responsable,
+    })
+
+
+def editar_nota(id_nota: int, nota: str, responsable: str) -> dict:
+    return supabase_client.rpc_con_reglas("editar_nota_pedido", {
+        "p_id": id_nota, "p_nota": nota, "p_responsable": responsable,
+    })
